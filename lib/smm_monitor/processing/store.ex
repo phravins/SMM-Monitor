@@ -9,9 +9,12 @@ defmodule SmmMonitor.Processing.Store do
   the caller's process, which keeps the TUI's 1s refresh off the GenServer's
   mailbox.
 
-  The table is an `:ordered_set` keyed by `{epoch_ms, id}`, which gives us
-  chronological iteration for free: "most recent N" is a walk backwards from
-  the last key, and pruning by age is a walk forwards from the first.
+  The table is an `:ordered_set` keyed by `{epoch_ms, platform, id}`, which
+  gives us chronological iteration for free: "most recent N" is a walk
+  backwards from the last key, and pruning by age is a walk forwards from
+  the first. The platform is part of the key because ids are only unique
+  *within* a platform — a bare `{epoch_ms, id}` would let a Reddit and a
+  YouTube mention that share an id overwrite one another.
 
   Nothing is persisted — restarting the app starts from an empty table.
   """
@@ -57,7 +60,9 @@ defmodule SmmMonitor.Processing.Store do
   @doc "Whether a mention with the same platform and id is already stored."
   @spec member?(table(), Mention.t()) :: boolean()
   def member?(table, %Mention{id: id, platform: platform}) do
-    match = [{{:_, %{id: id, platform: platform}}, [], [true]}]
+    # Matches on id and platform but *not* timestamp: a platform that
+    # re-reports a post with a nudged timestamp is still the same mention.
+    match = [{{{:_, platform, id}, :_}, [], [true]}]
     :ets.select_count(table, match) > 0
   end
 
@@ -120,7 +125,9 @@ defmodule SmmMonitor.Processing.Store do
 
   # --- internals ------------------------------------------------------------
 
-  defp key(%Mention{id: id} = mention), do: {Mention.epoch_ms(mention), id}
+  defp key(%Mention{id: id, platform: platform} = mention) do
+    {Mention.epoch_ms(mention), platform, id}
+  end
 
   # Backwards traversal of the ordered_set: newest keys first. Stops as soon
   # as we hit the window boundary or the limit, so a long-lived table doesn't
@@ -128,7 +135,7 @@ defmodule SmmMonitor.Processing.Store do
   defp walk_back(_table, :"$end_of_table", _platform, _since, _remaining, acc), do: acc
   defp walk_back(_table, _key, _platform, _since, 0, acc), do: acc
 
-  defp walk_back(table, {timestamp, _id} = key, platform, since, remaining, acc)
+  defp walk_back(table, {timestamp, _platform, _id} = key, platform, since, remaining, acc)
        when timestamp >= since do
     {acc, remaining} =
       case :ets.lookup(table, key) do
@@ -154,16 +161,18 @@ defmodule SmmMonitor.Processing.Store do
   defp matches?(%Mention{platform: platform}, platform), do: true
   defp matches?(%Mention{}, _platform), do: false
 
+  # Both the timestamp and the platform live in the key, so counting never
+  # has to look at the stored struct.
   defp count_spec(:all, since) do
-    [{{{:"$1", :_}, :_}, [{:>=, :"$1", since}], [true]}]
+    [{{{:"$1", :_, :_}, :_}, [{:>=, :"$1", since}], [true]}]
   end
 
   defp count_spec(platform, since) do
-    [{{{:"$1", :_}, %{platform: platform}}, [{:>=, :"$1", since}], [true]}]
+    [{{{:"$1", platform, :_}, :_}, [{:>=, :"$1", since}], [true]}]
   end
 
   defp delete_older_than(table, cutoff) do
-    spec = [{{{:"$1", :_}, :_}, [{:<, :"$1", cutoff}], [true]}]
+    spec = [{{{:"$1", :_, :_}, :_}, [{:<, :"$1", cutoff}], [true]}]
     :ets.select_delete(table, spec)
   end
 
