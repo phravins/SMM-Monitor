@@ -20,7 +20,7 @@ defmodule SmmMonitor.Fetchers.YouTube do
   def ready?(%{credentials: credentials}), do: is_binary(credentials[:api_key])
 
   @impl true
-  def fetch(%{keywords: keywords, credentials: credentials, opts: opts}) do
+  def fetch(%{keywords: keywords, credentials: credentials, opts: opts}, state) do
     request =
       Req.new(
         url: @search_url,
@@ -36,10 +36,10 @@ defmodule SmmMonitor.Fetchers.YouTube do
       )
 
     case Req.request(request) do
-      {:ok, %{status: 200, body: body}} -> {:ok, parse(body)}
-      {:ok, %{status: 403, body: body}} -> {:error, {:quota_or_forbidden, body}}
-      {:ok, %{status: status}} -> {:error, {:http_error, status}}
-      {:error, reason} -> {:error, {:transport, reason}}
+      {:ok, %{status: 200, body: body}} -> {:ok, parse(body), state}
+      {:ok, %{status: 403, body: body}} -> {:error, {:quota_or_forbidden, body}, state}
+      {:ok, %{status: status}} -> {:error, {:http_error, status}, state}
+      {:error, reason} -> {:error, {:transport, reason}, state}
     end
   end
 

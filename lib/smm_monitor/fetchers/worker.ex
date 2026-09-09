@@ -10,12 +10,16 @@ defmodule SmmMonitor.Fetchers.Worker do
   Each poll:
 
     1. builds a `Fetcher.context` from config,
-    2. calls `mock_fetch/1` or `fetch/1` depending on mode,
+    2. calls `mock_fetch/2` or `fetch/2` depending on mode,
     3. hands the results to `SmmMonitor.Monitor`,
-    4. schedules the next poll with `Process.send_after/3`.
+    4. carries the returned platform state into the next poll,
+    5. schedules the next poll with `Process.send_after/3`.
 
   Scheduling happens *after* the work, not on a fixed interval, so a slow
-  API can never let polls pile up on top of each other.
+  API can never let polls pile up on top of each other. A fetcher that
+  fails with `{:rate_limited, ms}` pushes the next poll out by at least
+  that long, so backing off is the fetcher's decision to make and the
+  worker's to honour.
 
   ## Failure policy
 
@@ -45,12 +49,18 @@ defmodule SmmMonitor.Fetchers.Worker do
       :platform,
       :interval_ms,
       :opts,
+      # Whatever the platform module carries between polls (Reddit's OAuth
+      # token and rate-limit quota; nil for everyone else).
+      :platform_state,
       poll_count: 0,
       mode: :mock,
       last_poll_at: nil,
       last_error: nil,
       inserted: 0,
-      failures: 0
+      failures: 0,
+      # Set once we've logged the "wanted live, no credentials" warning, so
+      # a missing key doesn't reprint every 30 seconds.
+      credentials_warned: false
     ]
   end
 
@@ -97,6 +107,8 @@ defmodule SmmMonitor.Fetchers.Worker do
       opts: Keyword.get(opts, :opts, [])
     }
 
+    state = %{state | platform_state: module.init_state(build_context(state))}
+
     Process.send_after(self(), :poll, :rand.uniform(@startup_jitter_ms))
 
     {:ok, state}
@@ -129,49 +141,79 @@ defmodule SmmMonitor.Fetchers.Worker do
 
   defp poll(state) do
     context = build_context(state)
-    mode = mode(state.module, context)
+    {mode, state} = resolve_mode(state, context)
 
-    state =
-      case do_fetch(state.module, mode, context) do
-        {:ok, mentions} ->
+    {state, retry_after} =
+      case do_fetch(state.module, mode, context, state.platform_state) do
+        {:ok, mentions, platform_state} ->
           {:ok, %{inserted: inserted}} = Monitor.record_many(mentions)
 
-          %{
+          state = %{
             state
             | inserted: state.inserted + inserted,
               last_error: nil,
-              last_poll_at: DateTime.utc_now()
+              last_poll_at: DateTime.utc_now(),
+              platform_state: platform_state
           }
 
-        {:error, reason} ->
+          {state, nil}
+
+        {:error, reason, platform_state} ->
           Logger.warning("#{state.platform} fetch failed: #{inspect(reason)}")
 
-          %{
+          state = %{
             state
             | failures: state.failures + 1,
               last_error: reason,
-              last_poll_at: DateTime.utc_now()
+              last_poll_at: DateTime.utc_now(),
+              platform_state: platform_state
           }
+
+          {state, Fetcher.retry_after(reason)}
       end
 
-    schedule_next(state.interval_ms)
+    # A fetcher that asked us to back off gets at least that long; otherwise
+    # the configured interval stands.
+    schedule_next(max(retry_after || 0, state.interval_ms))
 
     %{state | poll_count: state.poll_count + 1, mode: mode}
   end
 
-  # Mock mode is a config flag, but a platform missing credentials also falls
-  # back to fixtures: an unconfigured key should degrade one tab, not empty
-  # the dashboard.
-  defp mode(module, context) do
+  # Mock mode is a config flag — global, or per-platform so one platform can
+  # go live while the rest stay on fixtures. A platform that *should* be live
+  # but has no credentials also falls back to fixtures: an unconfigured key
+  # should degrade one tab, not empty the dashboard.
+  defp resolve_mode(state, context) do
     cond do
-      SmmMonitor.config(:mock_mode, true) -> :mock
-      module.ready?(context) -> :live
-      true -> :mock
+      SmmMonitor.mock_platform?(context.platform) ->
+        {:mock, state}
+
+      state.module.ready?(context) ->
+        {:live, %{state | credentials_warned: false}}
+
+      true ->
+        {:mock, warn_missing_credentials(state)}
     end
   end
 
-  defp do_fetch(module, :mock, context), do: module.mock_fetch(context)
-  defp do_fetch(module, :live, context), do: module.fetch(context)
+  # Logged once per stretch of missing credentials, not on every poll.
+  defp warn_missing_credentials(%State{credentials_warned: true} = state), do: state
+
+  defp warn_missing_credentials(state) do
+    Logger.warning(
+      "#{state.platform} is configured for live data but its credentials are missing " <>
+        "or incomplete - falling back to mock data. See the README for the " <>
+        "environment variables this platform needs."
+    )
+
+    %{state | credentials_warned: true}
+  end
+
+  defp do_fetch(module, :mock, context, platform_state),
+    do: module.mock_fetch(context, platform_state)
+
+  defp do_fetch(module, :live, context, platform_state),
+    do: module.fetch(context, platform_state)
 
   defp build_context(state) do
     %{

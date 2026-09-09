@@ -2,11 +2,22 @@ defmodule SmmMonitor.Fetchers.Fetcher do
   @moduledoc """
   The contract every platform module implements.
 
-  A fetcher is stateless: it is handed a context and returns mentions.
-  All the process machinery — polling, scheduling, error handling, handing
-  results to the processing layer — lives once in
+  A fetcher owns no processes and no timers: it is handed a context and its
+  own state, and returns mentions plus the state to carry into the next
+  poll. All the process machinery — polling, scheduling, error handling,
+  handing results to the processing layer — lives once in
   `SmmMonitor.Fetchers.Worker`, so a new platform is just this behaviour
   plus a line of config.
+
+  ## Per-platform state
+
+  Most platforms need nothing between polls and can ignore the state
+  argument entirely (`init_state/1` defaults to `nil`). Reddit is the
+  reason it exists: it caches an OAuth token and its rate-limit quota
+  there, so the token survives from one poll to the next and is refreshed
+  only when it is close to expiring. The state lives in the worker's
+  GenServer state, which means a crashing platform starts again with a
+  clean token and cannot corrupt anyone else's.
 
   ## Adding a platform
 
@@ -17,14 +28,14 @@ defmodule SmmMonitor.Fetchers.Fetcher do
         def ready?(context), do: context.credentials[:access_token] != nil
 
         @impl true
-        def fetch(context) do
+        def fetch(context, state) do
           # ... call the API, map onto SmmMonitor.Mention.new/1 attrs ...
-          {:ok, mentions}
+          {:ok, mentions, state}
         end
       end
 
   Then add it to `config :smm_monitor, :platforms` in `config/config.exs`.
-  `use` provides a `mock_fetch/1` backed by the shared fixtures, so the new
+  `use` provides a `mock_fetch/2` backed by the shared fixtures, so the new
   platform shows up in the dashboard before its API work is finished.
   """
 
@@ -45,8 +56,11 @@ defmodule SmmMonitor.Fetchers.Fetcher do
           poll_count: non_neg_integer()
         }
 
+  @typedoc "Whatever a platform needs to carry between polls. Often `nil`."
+  @type state :: term()
+
   @typedoc "Mention attrs maps, as accepted by `SmmMonitor.Mention.new/1`."
-  @type result :: {:ok, [map()]} | {:error, term()}
+  @type result :: {:ok, [map()], state()} | {:error, term(), state()}
 
   @doc "The platform this module fetches for."
   @callback platform() :: atom()
@@ -62,11 +76,25 @@ defmodule SmmMonitor.Fetchers.Fetcher do
   """
   @callback ready?(context()) :: boolean()
 
+  @doc "Initial per-platform state, built once when the worker starts."
+  @callback init_state(context()) :: state()
+
   @doc "Fetches mentions from the live API."
-  @callback fetch(context()) :: result()
+  @callback fetch(context(), state()) :: result()
 
   @doc "Fetches fixture mentions. Defaults to the shared generator."
-  @callback mock_fetch(context()) :: result()
+  @callback mock_fetch(context(), state()) :: result()
+
+  @doc """
+  How long to wait before the next poll, when an error asks for a delay.
+
+  A fetcher signals this by failing with `{:rate_limited, ms}`; the worker
+  uses it instead of the usual interval. Anything else means "no opinion",
+  and the normal schedule applies.
+  """
+  @spec retry_after(term()) :: pos_integer() | nil
+  def retry_after({:rate_limited, ms}) when is_integer(ms) and ms > 0, do: ms
+  def retry_after(_reason), do: nil
 
   defmacro __using__(opts) do
     platform = Keyword.fetch!(opts, :platform)
@@ -87,14 +115,21 @@ defmodule SmmMonitor.Fetchers.Fetcher do
       @impl true
       def ready?(_context), do: false
 
+      # Most platforms carry nothing between polls.
+      @impl true
+      def init_state(_context), do: nil
+
       # Conservative default: no live implementation yet.
       @impl true
-      def fetch(_context), do: {:error, :not_implemented}
+      def fetch(_context, state), do: {:error, :not_implemented, state}
 
       @impl true
-      def mock_fetch(context), do: SmmMonitor.Fetchers.Fixtures.fetch(context)
+      def mock_fetch(context, state) do
+        {:ok, mentions} = SmmMonitor.Fetchers.Fixtures.fetch(context)
+        {:ok, mentions, state}
+      end
 
-      defoverridable ready?: 1, fetch: 1, mock_fetch: 1, display_name: 0
+      defoverridable ready?: 1, init_state: 1, fetch: 2, mock_fetch: 2, display_name: 0
     end
   end
 end

@@ -164,12 +164,14 @@ defmodule SmmMonitor.Fetchers.ParsingTest do
 
       refute Twitter.ready?(context)
       refute Instagram.ready?(context)
-      assert {:error, :requires_paid_api_access} = Twitter.fetch(context)
-      assert {:error, :requires_business_account_and_app_review} = Instagram.fetch(context)
+      assert {:error, :requires_paid_api_access, nil} = Twitter.fetch(context, nil)
+
+      assert {:error, :requires_business_account_and_app_review, nil} =
+               Instagram.fetch(context, nil)
     end
 
     test "still produce mock mentions" do
-      assert {:ok, mentions} = Twitter.mock_fetch(context_for(:twitter))
+      assert {:ok, mentions, nil} = Twitter.mock_fetch(context_for(:twitter), nil)
       assert length(mentions) > 0
       assert Enum.all?(mentions, &(&1.platform == :twitter))
       assert Enum.all?(mentions, & &1.mock)

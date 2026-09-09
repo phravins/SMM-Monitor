@@ -28,10 +28,12 @@ defmodule SmmMonitor.Fetchers.Reddit do
   end
 
   @impl true
-  def fetch(context) do
+  def fetch(context, state) do
     with {:ok, token} <- access_token(context),
          {:ok, body} <- search(token, context) do
-      {:ok, parse(body)}
+      {:ok, parse(body), state}
+    else
+      {:error, reason} -> {:error, reason, state}
     end
   end
 

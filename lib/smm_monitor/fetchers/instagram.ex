@@ -29,7 +29,7 @@ defmodule SmmMonitor.Fetchers.Instagram do
   def ready?(_context), do: false
 
   @impl true
-  def fetch(_context), do: {:error, :requires_business_account_and_app_review}
+  def fetch(_context, state), do: {:error, :requires_business_account_and_app_review, state}
 
   @doc "Maps a Graph API `/tags` payload onto mention attrs."
   @spec parse(map()) :: [map()]

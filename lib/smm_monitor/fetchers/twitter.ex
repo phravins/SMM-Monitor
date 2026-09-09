@@ -29,7 +29,7 @@ defmodule SmmMonitor.Fetchers.Twitter do
   def ready?(_context), do: false
 
   @impl true
-  def fetch(_context), do: {:error, :requires_paid_api_access}
+  def fetch(_context, state), do: {:error, :requires_paid_api_access, state}
 
   @doc """
   Maps a v2 recent-search payload onto mention attrs.
