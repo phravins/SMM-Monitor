@@ -8,7 +8,7 @@ defmodule SmmMonitor.MixProject do
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      escript: escript(),
+      releases: releases(),
       description: "Terminal UI for monitoring client brand mentions across social platforms.",
       elixirc_paths: elixirc_paths(Mix.env())
     ]
@@ -24,8 +24,16 @@ defmodule SmmMonitor.MixProject do
     ]
   end
 
-  defp escript do
-    [main_module: SmmMonitor.CLI, name: "smm_monitor"]
+  # `mix release` is the shippable build. An escript is *not* viable here:
+  # Ratatouille's termbox NIF can't be loaded out of an escript archive, so
+  # the binary would start and immediately fail on `ExTermbox.Bindings.init/0`.
+  defp releases do
+    [
+      smm_monitor: [
+        include_executables_for: [:unix],
+        applications: [runtime_tools: :permanent]
+      ]
+    ]
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]

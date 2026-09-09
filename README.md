@@ -65,12 +65,21 @@ This is an upstream packaging issue, not a problem with this project.
 | `mix smm.tui` | Starts the supervision tree and the dashboard. The usual way. |
 | `SMM_TUI=1 mix run --no-halt` | Same thing via the app's own config flag. |
 | `mix run --no-halt` | Runs the fetchers and processing layer headless, no UI. |
-| `mix escript.build && ./smm_monitor` | A single copyable binary. |
+| `MIX_ENV=prod mix release` | Builds a self-contained release (see below). |
 | `mix test` | The test suite (no fetchers, no TUI — see `config/test.exs`). |
 
-For a long-running deployment, `mix release` is the better option; the
-escript exists because it's the easiest way to hand the dashboard to
-someone else on the team.
+To hand the dashboard to someone else, build a release and run it with the
+TUI flag set:
+
+```sh
+MIX_ENV=prod mix release
+SMM_TUI=1 _build/prod/rel/smm_monitor/bin/smm_monitor start
+```
+
+There's deliberately no escript: Ratatouille's termbox NIF can't be loaded
+out of an escript archive, so the binary would start and immediately fail
+on `ExTermbox.Bindings.init/0`. A release keeps the NIF in a real `priv`
+directory and works.
 
 ### Keyboard shortcuts
 
