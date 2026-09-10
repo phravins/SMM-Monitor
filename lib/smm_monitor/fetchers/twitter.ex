@@ -88,9 +88,9 @@ defmodule SmmMonitor.Fetchers.Twitter do
     post_budget = PostBudget.rollover(state.post_budget, DateTime.utc_now())
     state = %{state | post_budget: post_budget}
 
-    with :ok <- check_post_budget(state, settings),
+    with {:ok, page_size} <- check_post_budget(state, settings),
          :ok <- check_rate_limit(state) do
-      search(context, state, settings, req_options)
+      search(context, state, settings, req_options, page_size)
     else
       {:post_budget_exhausted, wait_ms} ->
         {:error, {:quota_exhausted, wait_ms}, log_budget_exhausted(state, wait_ms)}
@@ -186,10 +186,19 @@ defmodule SmmMonitor.Fetchers.Twitter do
 
   # --- internals ------------------------------------------------------------
 
+  # Asks for a page no larger than the budget can pay for, so a nearly
+  # spent budget still buys a smaller search instead of standing the
+  # platform down with posts left unspent.
   defp check_post_budget(state, settings) do
-    case PostBudget.check(state.post_budget, max_results(settings), DateTime.utc_now()) do
-      {:exhausted, wait_ms} -> {:post_budget_exhausted, wait_ms}
-      :ok -> :ok
+    case PostBudget.page_size(state.post_budget, max_results(settings), @min_results) do
+      {:ok, page_size} ->
+        case PostBudget.check(state.post_budget, page_size, DateTime.utc_now()) do
+          {:exhausted, wait_ms} -> {:post_budget_exhausted, wait_ms}
+          :ok -> {:ok, page_size}
+        end
+
+      :none ->
+        {:post_budget_exhausted, PostBudget.ms_until_reset(state.post_budget, DateTime.utc_now())}
     end
   end
 
@@ -200,12 +209,12 @@ defmodule SmmMonitor.Fetchers.Twitter do
     end
   end
 
-  defp search(context, state, settings, req_options) do
+  defp search(context, state, settings, req_options, page_size) do
     request =
       Req.new(
         [
           url: @search_url,
-          params: search_params(context, settings),
+          params: search_params(context, settings, page_size),
           headers: [{"authorization", "Bearer #{context.credentials[:bearer_token]}"}],
           receive_timeout: 10_000,
           # Retrying is the worker's job. A blind retry of a 429 spends a
@@ -221,10 +230,10 @@ defmodule SmmMonitor.Fetchers.Twitter do
     |> handle_response(state)
   end
 
-  defp search_params(context, settings) do
+  defp search_params(context, settings, page_size) do
     [
       query: build_query(context.keywords, settings),
-      max_results: max_results(settings),
+      max_results: page_size,
       "tweet.fields": @tweet_fields,
       expansions: @expansions,
       "user.fields": @user_fields
@@ -271,7 +280,10 @@ defmodule SmmMonitor.Fetchers.Twitter do
     else
       wait_ms = RateLimit.ms_until_reset(rate_limit) || :timer.minutes(15)
 
-      Logger.info(
+      # Proactive backoff is routine and logs at :info. Actually being
+      # handed a 429 is not: it means the tracking above failed to keep us
+      # clear of a limit, and coverage is being lost until the reset.
+      Logger.warning(
         "twitter: rate limited by X#{summary_suffix(state)}, waiting #{div(wait_ms, 1_000)}s " <>
           "for the window to reset"
       )

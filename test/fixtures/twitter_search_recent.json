@@ -1,0 +1,69 @@
+{
+  "data": [
+    {
+      "id": "1834729501234567890",
+      "text": "just moved our whole content calendar over to realoffice and the scheduling is so much better than what we had before",
+      "created_at": "2026-09-09T14:22:41.000Z",
+      "author_id": "44196397",
+      "lang": "en",
+      "public_metrics": {
+        "retweet_count": 3,
+        "reply_count": 1,
+        "like_count": 27,
+        "quote_count": 0,
+        "bookmark_count": 4,
+        "impression_count": 3120
+      }
+    },
+    {
+      "id": "1834701122334455667",
+      "text": "@realoffice support has been terrible this week, third ticket with no reply. anyone else seeing this?",
+      "created_at": "2026-09-09T11:05:03.000Z",
+      "author_id": "1329384756102938475",
+      "lang": "en",
+      "public_metrics": {
+        "retweet_count": 0,
+        "reply_count": 6,
+        "like_count": 2,
+        "quote_count": 1,
+        "bookmark_count": 0,
+        "impression_count": 890
+      }
+    },
+    {
+      "id": "1834688999888777666",
+      "text": "does real office integrate with canva? asking before we commit to the annual plan",
+      "created_at": "2026-09-09T09:47:19.000Z",
+      "author_id": "998877665544332211",
+      "lang": "en",
+      "public_metrics": {
+        "retweet_count": 0,
+        "reply_count": 2,
+        "like_count": 0,
+        "quote_count": 0,
+        "bookmark_count": 1,
+        "impression_count": 214
+      }
+    }
+  ],
+  "includes": {
+    "users": [
+      {
+        "id": "44196397",
+        "name": "Maya Okonkwo",
+        "username": "maya_builds"
+      },
+      {
+        "id": "1329384756102938475",
+        "name": "Ops Owen",
+        "username": "ops_owen"
+      }
+    ]
+  },
+  "meta": {
+    "newest_id": "1834729501234567890",
+    "oldest_id": "1834688999888777666",
+    "result_count": 3,
+    "next_token": "b26v89c19zqg8o3fpds1l0k0e2v1j9m4x7hq5t"
+  }
+}

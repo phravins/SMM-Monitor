@@ -107,6 +107,22 @@ defmodule SmmMonitor.Fetchers.Twitter.PostBudget do
   end
 
   @doc """
+  The page size to ask for: `requested`, trimmed to what is left.
+
+  Without this, a budget with 12 posts left and a 25-post page size would
+  stand the platform down holding unspent budget — and a budget set lower
+  than one page would never allow a single search. Returns `:none` when
+  even the API's smallest page (`min_page`) won't fit, which is the point
+  at which standing down is the honest answer.
+  """
+  @spec page_size(t(), pos_integer(), pos_integer()) :: {:ok, pos_integer()} | :none
+  def page_size(%__MODULE__{} = budget, requested, min_page) do
+    affordable = min(requested, remaining(budget))
+
+    if affordable >= min_page, do: {:ok, affordable}, else: :none
+  end
+
+  @doc """
   Records the posts a search actually returned.
 
   Counted from the response rather than from `max_results`, because the
