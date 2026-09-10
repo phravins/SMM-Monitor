@@ -184,6 +184,92 @@ one.
 Credentials are deliberately not editable from the screen: they belong in
 the environment, not in a file the dashboard writes.
 
+## Stored history
+
+Mentions are written to a SQLite database as they arrive, so history
+survives a restart. **ETS is still the only read path** — the database is
+a durable log alongside it, never in front of it.
+
+The dashboard reads from ETS exactly as it always did; a mention's journey
+to disk is a `cast` that nothing waits on. Measured under a sustained
+write load of 4,000 mentions, `Monitor.recent(:all, 200)` had a median
+latency of **138µs with persistence on and 138µs with it off** — the read
+path genuinely doesn't know the database exists.
+
+On boot the most recent 200 mentions per platform are loaded back into
+ETS, so the dashboard has history immediately rather than looking like a
+fresh install until the first poll lands.
+
+### Where the database lives
+
+`~/.local/share/smm_monitor/mentions.db` (honouring `XDG_DATA_HOME`), or
+wherever `SMM_DB_PATH` points. **No manual setup or migration step** — the
+file is created and migrated on first boot:
+
+```
+[info] database: applied 1 migration(s)
+```
+
+Not under `priv/`, for the same reason the config file isn't:
+`:code.priv_dir/1` resolves to the *build* copy, so `mix clean` would
+silently delete months of collected history. History that survives a
+restart but not a rebuild isn't really durable.
+
+### Retention
+
+Mentions published more than **30 days** ago are deleted once every 24
+hours. Change the window with `SMM_RETENTION_DAYS`.
+
+The first pass runs 30 seconds after boot rather than a day later, so an
+instance that has been off for a while tidies up when it comes back
+instead of carrying stale rows until its first anniversary. Retention is
+keyed on when a mention was *published*, not when it was stored, so
+backfilling old history doesn't earn it another 30 days.
+
+### Disk space
+
+About **230 bytes per mention** once settled (measured, not estimated).
+At a 30-day window that reaches a steady state of roughly:
+
+| Volume | 30-day steady state |
+| --- | --- |
+| 500 mentions/day | ~3 MB |
+| 2,000/day | ~13 MB |
+| 10,000/day | ~66 MB |
+| 50,000/day | ~330 MB |
+
+Two things worth knowing:
+
+* **WAL files.** Journalling is set to WAL, so you'll see `mentions.db-wal`
+  and `mentions.db-shm` alongside the database. The `-wal` file can be
+  larger than the database itself between checkpoints; it's checkpointed
+  automatically and on a clean shutdown, and it is not lost data.
+* **Deleting rows doesn't shrink the file.** SQLite reuses freed pages, so
+  the file settles at its high-water mark rather than shrinking after a
+  prune. That's fine at steady state — space is reused, not leaked — but
+  if you cut `SMM_RETENTION_DAYS` sharply and want the space back, run
+  `VACUUM` against the file once.
+
+### Why Ecto rather than raw exqlite
+
+`ecto_sqlite3` uses `exqlite` as its driver, so this isn't a choice
+against exqlite — exqlite still does the work. Ecto earns its four extra
+dependencies here for two reasons: `Ecto.Migrator` gives versioned,
+idempotent migrations, which is exactly what "no manual migration step"
+requires, and `DBConnection` pooling makes it safe for the writer, the
+boot loader and the retention job to touch the database from three
+different processes. Raw exqlite would be the better call for a single
+throwaway query; for a durable log with a schema that will change, this
+is the standard path.
+
+### What happens if the database is unavailable
+
+Every query degrades rather than raises. A missing, locked or corrupt
+database costs you history, not your dashboard — the app falls back to
+exactly what it was before persistence existed: an in-memory view.
+Migration failures, write failures and read failures are each logged and
+carried on from.
+
 ## Live data
 
 Everything runs on fixtures until you say otherwise. **Reddit and YouTube
@@ -422,6 +508,9 @@ its text.
 | `SMM_MOCK_YOUTUBE` | Per-platform override for YouTube. Unset inherits the global. |
 | `SMM_KEYWORDS` | Comma-separated brand terms — the *default* before anything is saved from the config screen |
 | `SMM_CONFIG_FILE` | Where runtime-editable settings are saved |
+| `SMM_DB_PATH` | Where collected mentions are stored |
+| `SMM_RETENTION_DAYS` | How long mentions are kept on disk (default 30) |
+| `SMM_HISTORY_LIMIT` | Mentions per platform restored on boot (default 200) |
 | `SMM_POLL_INTERVAL_MS` | Poll interval per platform (default 30000) |
 | `SMM_REDDIT_SUBREDDITS` | Comma-separated subreddits to watch. Empty searches all of Reddit. |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` | Reddit **(live)** |
@@ -462,6 +551,10 @@ Three layers, each supervised independently:
 ```
 SmmMonitor.Supervisor                    (one_for_one)
 ├── SmmMonitor.Config                    runtime-editable settings, file-backed
+├── SmmMonitor.Repo                      SQLite, the durable mention log
+├── SmmMonitor.Persistence.Migrator      migrates on boot, then :ignore
+├── SmmMonitor.Persistence.Writer        off-critical-path writes
+├── SmmMonitor.Persistence.Retention     daily prune
 ├── SmmMonitor.Processing.Processor      ETS owner, scoring, aggregation
 ├── SmmMonitor.Fetchers.Supervisor       (one_for_one)
 │   ├── PlatformSupervisor(:reddit)    → Worker(:reddit)
@@ -495,6 +588,16 @@ live here instead. It's the single source of truth: fetchers read their
 search terms from it on every poll, which is what makes an edit land on
 the next poll rather than the next restart. Started first, ahead of the
 fetchers that read from it.
+
+**Persistence.** SQLite via Ecto, kept strictly off the read path. The
+processor hands newly-inserted mentions to `Persistence.Writer` with a
+cast and carries on; a whole poll arrives as one message and goes in as
+one `insert_all`, so batching comes for free without a flush timer. The
+`Migrator` is a supervision-tree child that does its work in
+`start_link/1` and returns `:ignore` — the point is timing, since a
+supervisor waits for each child's `start_link` to return, guaranteeing
+the table exists before the processor queries it. A `Task` would return
+as soon as it was spawned.
 
 **Processing.** One GenServer with a narrow job: score sentiment,
 de-duplicate, store, prune. It doesn't fetch and it doesn't render. Writes
@@ -615,8 +718,9 @@ terminal.
 
 Tests run with `start_fetchers: false` and `start_tui: false`, so they get
 the processing layer and nothing else: no 30s polls racing assertions.
-`:config_file` points at `tmp/`, so a test can never write over a real
-config.
+`:config_file` and the database both point at `tmp/`, so a test can never
+write over a real config or real collected history. Persistence tests run
+in a sandboxed transaction that is rolled back afterwards.
 
 ## Configuration reference
 
@@ -635,6 +739,10 @@ Compile-time defaults live in `config/config.exs`:
 | `:start_tui` | `false` | Whether the tree starts the dashboard |
 | `:renderer` | `RatatouilleRenderer` | The TUI drawing layer |
 | `:config_file` | per-user path | Where runtime-editable settings are saved |
+| `:db_retention_days` | `30` | How long mentions are kept on disk |
+| `:history_limit` | `200` | Mentions per platform restored on boot |
+| `:start_persistence` | `true` | Whether the tree starts the repo and migrator |
+| `:persist_writes` | `true` | Whether mentions are written to disk |
 | `:platforms` | four entries | Platform → module, enabled flag, opts |
 
 Reddit has its own block, since these are deployment choices rather than
@@ -667,8 +775,10 @@ runtime. Both live platforms search for the *same* brand terms.
 
 ## Known limitations
 
-* No persistence of *mentions* — a restart loses the stored window. The
-  config screen's settings do persist.
+* Mentions older than the retention window are gone for good; there's no
+  archive or export.
+* Retention deletes rows but SQLite doesn't shrink the file — see disk
+  space above.
 * The config screen edits brand terms and subreddits only. Credentials
   and mock/live remain env-var controlled and need a restart.
 * Sentiment is a word list; sarcasm, negation beyond one word, and
