@@ -47,13 +47,16 @@ defmodule SmmMonitor.Fetchers.Fetcher do
     * `:credentials` — from `config :smm_monitor, :credentials`
     * `:opts`        — the platform's `:opts` from config
     * `:poll_count`  — polls completed so far; 0 on the first one
+    * `:interval_ms` — this platform's poll interval, so a fetcher working
+      against a daily budget can tell whether its cadence is affordable
   """
   @type context :: %{
           platform: atom(),
           keywords: [String.t()],
           credentials: keyword(),
           opts: keyword(),
-          poll_count: non_neg_integer()
+          poll_count: non_neg_integer(),
+          interval_ms: pos_integer()
         }
 
   @typedoc "Whatever a platform needs to carry between polls. Often `nil`."

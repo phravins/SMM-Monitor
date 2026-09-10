@@ -47,4 +47,17 @@ config :smm_monitor, SmmMonitor.Fetchers.Reddit,
   # How far back the search reaches: hour, day, week, month, year, all.
   time_filter: "week"
 
+# YouTube's free tier is 10,000 quota units a day and a search costs 100,
+# so the real ceiling is 100 searches a day. The budget below stops short
+# of that, leaving room for anything else using the same key.
+config :smm_monitor, SmmMonitor.Fetchers.YouTube,
+  # Results per search. The API caps a page at 50.
+  max_results: 25,
+  # date | relevance | rating | title | viewCount
+  order: "date",
+  # Stop polling once this many units have been spent today.
+  daily_quota_budget: 8_000,
+  # Only consider videos published within this window.
+  published_within_ms: :timer.hours(24)
+
 import_config "#{config_env()}.exs"

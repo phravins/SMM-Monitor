@@ -221,7 +221,8 @@ defmodule SmmMonitor.Fetchers.Worker do
       keywords: SmmMonitor.config(:keywords, []),
       credentials: credentials(state.platform),
       opts: state.opts,
-      poll_count: state.poll_count
+      poll_count: state.poll_count,
+      interval_ms: state.interval_ms
     }
   end
 
@@ -241,7 +242,8 @@ defmodule SmmMonitor.Fetchers.Worker do
       keywords: SmmMonitor.config(:keywords, []),
       credentials: credentials(module.platform()),
       opts: opts,
-      poll_count: 0
+      poll_count: 0,
+      interval_ms: SmmMonitor.config(:poll_interval_ms, 30_000)
     }
   end
 end
