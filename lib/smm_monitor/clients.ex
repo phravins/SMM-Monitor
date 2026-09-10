@@ -2,7 +2,7 @@ defmodule SmmMonitor.Clients do
   @moduledoc """
   The clients being monitored: the runtime source of truth.
 
-  This replaces the old single-brand `SmmMonitor.Config`. Fetchers read
+  This replaces the old single-brand config. Fetchers read
   the client list on every poll rather than at boot, which is what makes
   adding a client from the config screen take effect on the next poll
   with no restart — the same property the single-keyword config had.

@@ -14,7 +14,7 @@ defmodule SmmMonitor.TUI.Model do
   """
 
   alias SmmMonitor.Alerts
-  alias SmmMonitor.Config
+  alias SmmMonitor.{Client, Clients}
   alias SmmMonitor.Monitor
   alias SmmMonitor.Processing.Sentiment
 
@@ -22,14 +22,24 @@ defmodule SmmMonitor.TUI.Model do
 
   defstruct tab: :all,
             tabs: [:all],
-            # Config screen state. `editing` names the field being typed
-            # into, or nil when the screen is just being read.
-            config: %{keywords: [], subreddits: []},
-            config_source: :defaults,
-            config_path: nil,
-            selected_field: :keywords,
+            # Every client, and the one this session is looking at. The
+            # selection is per session on purpose: two people on separate
+            # SSH sessions watch different clients without fighting over
+            # a shared one.
+            clients: [],
+            client_id: nil,
+            # Config screen state. The screen is a grid — one row per
+            # client, one column per editable field — so the selection is
+            # a cell. `editing` names the field being typed into, or nil
+            # when the screen is just being read.
+            selected_client: 0,
+            selected_field: :name,
             editing: nil,
             buffer: "",
+            # Set to a client id while a delete is waiting for
+            # confirmation. Removing a client takes its mentions with it,
+            # which is not something to do on a single keystroke.
+            confirm_remove: nil,
             flash: nil,
             # Alerts raised recently, newest first. Shown as a banner.
             alerts: [],
@@ -73,8 +83,8 @@ defmodule SmmMonitor.TUI.Model do
     ?c => :config
   }
 
-  # The fields the config screen can edit, in display order.
-  @config_fields [:keywords, :subreddits]
+  # The fields of a client the config screen can edit, in display order.
+  @config_fields [:name, :keywords, :subreddits]
 
   @doc """
   Builds the initial model.
@@ -85,11 +95,14 @@ defmodule SmmMonitor.TUI.Model do
   """
   @spec new(map()) :: t()
   def new(context \\ %{}) do
+    clients = read_clients()
+
     %__MODULE__{
       tabs: [:all | SmmMonitor.platforms()] ++ [:config],
       rows: rows_for(context),
       read_only: Map.get(context, :read_only, false),
-      keywords: SmmMonitor.config(:keywords, []),
+      clients: clients,
+      client_id: Map.get(context, :client_id) || default_client_id(clients),
       mock_mode: SmmMonitor.config(:mock_mode, true),
       window_ms: SmmMonitor.config(:window_ms, :timer.hours(24))
     }
@@ -107,21 +120,38 @@ defmodule SmmMonitor.TUI.Model do
     # The config tab has no mention list of its own; reading for :config
     # would filter on a platform that doesn't exist.
     reading_tab = if model.tab == :config, do: :all, else: model.tab
-    mentions = Monitor.recent(reading_tab, 200)
+    clients = read_clients()
+    model = %{model | clients: clients, client_id: resolve_selection(model, clients)}
+    scope = model.client_id || :all
 
     %{
       model
-      | mentions: mentions,
-        stats: Monitor.stats(reading_tab),
-        breakdown: Monitor.breakdown(),
+      | mentions: Monitor.recent(reading_tab, 200, scope),
+        stats: Monitor.stats(reading_tab, nil, scope),
+        breakdown: Monitor.breakdown(nil, scope),
         statuses: statuses(),
-        alerts: read_alerts(),
-        config: read_config(),
-        config_source: config_source(),
-        config_path: config_path(),
+        alerts: read_alerts(scope),
+        keywords: keywords_of(model),
         updated_at: DateTime.utc_now()
     }
+    |> clamp_selection()
     |> clamp_offset()
+  end
+
+  # A client removed by someone else — or the very first refresh — leaves
+  # the selection pointing at nothing. Falling back keeps the dashboard
+  # showing *a* client rather than an empty scope that looks like silence.
+  defp resolve_selection(%__MODULE__{client_id: nil}, clients), do: default_client_id(clients)
+
+  defp resolve_selection(%__MODULE__{client_id: id}, clients) do
+    if Enum.any?(clients, &(&1.id == id)), do: id, else: default_client_id(clients)
+  end
+
+  defp default_client_id([]), do: nil
+
+  defp default_client_id(clients) do
+    active = Enum.filter(clients, & &1.active)
+    List.first((active in [[], nil] && clients) || active).id
   end
 
   @doc """
@@ -145,14 +175,47 @@ defmodule SmmMonitor.TUI.Model do
     select_tab(model, @tab_keys[char])
   end
 
-  # On the config screen the same keys move between fields rather than
-  # scrolling a list that isn't there.
-  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?j}), do: move_field(model, 1)
-  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?k}), do: move_field(model, -1)
-  def handle_key(%__MODULE__{tab: :config} = model, {:key, :arrow_down}), do: move_field(model, 1)
-  def handle_key(%__MODULE__{tab: :config} = model, {:key, :arrow_up}), do: move_field(model, -1)
+  # Cycling clients works from every tab: switching client is the thing
+  # an account manager does most, and it should never need a detour
+  # through the config screen.
+  def handle_key(%__MODULE__{} = model, {:char, ?]}), do: cycle_client(model, 1)
+  def handle_key(%__MODULE__{} = model, {:char, ?[}), do: cycle_client(model, -1)
+
+  # The numbered list: 1-9 jump straight to a client.
+  def handle_key(%__MODULE__{} = model, {:char, char}) when char in ?1..?9 do
+    select_client_at(model, char - ?0)
+  end
+
+  # On the config screen these keys manage clients rather than scrolling
+  # a mention list that isn't there.
+  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?j}), do: move_client(model, 1)
+  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?k}), do: move_client(model, -1)
+  def handle_key(%__MODULE__{tab: :config} = model, {:key, :arrow_down}), do: move_client(model, 1)
+  def handle_key(%__MODULE__{tab: :config} = model, {:key, :arrow_up}), do: move_client(model, -1)
+  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?l}), do: move_field(model, 1)
+  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?h}), do: move_field(model, -1)
+
+  def handle_key(%__MODULE__{tab: :config} = model, {:key, :arrow_right}),
+    do: move_field(model, 1)
+
+  def handle_key(%__MODULE__{tab: :config} = model, {:key, :arrow_left}), do: move_field(model, -1)
   def handle_key(%__MODULE__{tab: :config} = model, {:char, ?e}), do: start_editing(model)
   def handle_key(%__MODULE__{tab: :config} = model, {:key, :enter}), do: start_editing(model)
+  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?+}), do: start_adding(model)
+  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?p}), do: toggle_active(model)
+  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?s}), do: view_highlighted(model)
+
+  # `d` asks the first time and confirms the second, so a client and its
+  # mentions can't be lost to one keystroke.
+  def handle_key(%__MODULE__{tab: :config, confirm_remove: nil} = model, {:char, ?d}),
+    do: request_remove(model)
+
+  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?d}), do: confirm_remove(model)
+
+  # Any other key while a removal is pending cancels it.
+  def handle_key(%__MODULE__{tab: :config, confirm_remove: id} = model, key) when not is_nil(id) do
+    handle_key(cancel_remove(model), key)
+  end
 
   def handle_key(model, {:char, ?j}), do: scroll(model, 1)
   def handle_key(model, {:char, ?k}), do: scroll(model, -1)
@@ -169,7 +232,15 @@ defmodule SmmMonitor.TUI.Model do
   def select_tab(%__MODULE__{} = model, tab) do
     if tab in model.tabs do
       # Leaving the config screen abandons any half-typed edit.
-      refresh(%{model | tab: tab, offset: 0, editing: nil, buffer: "", flash: nil})
+      refresh(%{
+        model
+        | tab: tab,
+          offset: 0,
+          editing: nil,
+          buffer: "",
+          flash: nil,
+          confirm_remove: nil
+      })
     else
       # An unconfigured platform (e.g. `i` with Instagram disabled) is a
       # no-op rather than an empty screen.
@@ -312,13 +383,82 @@ defmodule SmmMonitor.TUI.Model do
   @spec scrollable?(t()) :: boolean()
   def scrollable?(%__MODULE__{} = model), do: length(model.mentions) > model.rows
 
-  # --- config screen --------------------------------------------------------
+  # --- client selection -----------------------------------------------------
 
-  @doc "The fields the config screen can edit, in display order."
+  @doc "The client this session is looking at, or `nil` if there are none."
+  @spec current_client(t()) :: Client.t() | nil
+  def current_client(%__MODULE__{clients: clients, client_id: id}) do
+    Enum.find(clients, &(&1.id == id))
+  end
+
+  @doc """
+  Moves the selection `delta` clients along, wrapping at both ends.
+
+  Bound to `]` and `[` so cycling never needs a modifier: switching
+  client is the thing an account manager does most.
+  """
+  @spec cycle_client(t(), integer()) :: t()
+  def cycle_client(%__MODULE__{clients: []} = model, _delta), do: model
+
+  def cycle_client(%__MODULE__{clients: clients} = model, delta) do
+    index = Enum.find_index(clients, &(&1.id == model.client_id)) || 0
+    next = Enum.at(clients, rem(index + delta + length(clients), length(clients)))
+    select_client(model, next.id)
+  end
+
+  @doc """
+  Jumps straight to the nth client, 1-based, as the number keys do.
+
+  Out of range is a no-op rather than an error: pressing 7 with three
+  clients means nothing, and should do nothing.
+  """
+  @spec select_client_at(t(), pos_integer()) :: t()
+  def select_client_at(%__MODULE__{clients: clients} = model, position) do
+    case Enum.at(clients, position - 1) do
+      nil -> model
+      client -> select_client(model, client.id)
+    end
+  end
+
+  @doc "Switches to a client by id and re-reads everything for it."
+  @spec select_client(t(), String.t()) :: t()
+  def select_client(%__MODULE__{} = model, id) do
+    # Scroll position belongs to the client whose list you were reading,
+    # so it resets rather than carrying over to a different list.
+    refresh(%{model | client_id: id, offset: 0, flash: nil})
+  end
+
+  @doc "Where the selected client sits in the list, 1-based, for the header."
+  @spec client_position(t()) :: {non_neg_integer(), non_neg_integer()}
+  def client_position(%__MODULE__{clients: clients} = model) do
+    case Enum.find_index(clients, &(&1.id == model.client_id)) do
+      nil -> {0, length(clients)}
+      index -> {index + 1, length(clients)}
+    end
+  end
+
+  # --- config screen: managing clients --------------------------------------
+
+  @doc "The fields of a client the config screen can edit, in display order."
   @spec config_fields() :: [atom()]
   def config_fields, do: @config_fields
 
-  @doc "Moves the selection between config fields, wrapping at the ends."
+  @doc "The client highlighted on the config screen, or `nil` when empty."
+  @spec highlighted_client(t()) :: Client.t() | nil
+  def highlighted_client(%__MODULE__{clients: clients, selected_client: index}) do
+    Enum.at(clients, index)
+  end
+
+  @doc "Moves the highlight between clients, wrapping at the ends."
+  @spec move_client(t(), integer()) :: t()
+  def move_client(%__MODULE__{clients: []} = model, _delta), do: model
+
+  def move_client(%__MODULE__{clients: clients} = model, delta) do
+    index = rem(model.selected_client + delta + length(clients), length(clients))
+    %{model | selected_client: index, flash: nil, confirm_remove: nil}
+  end
+
+  @doc "Moves the highlight between a client's fields, wrapping at the ends."
   @spec move_field(t(), integer()) :: t()
   def move_field(%__MODULE__{} = model, delta) do
     index = Enum.find_index(@config_fields, &(&1 == model.selected_field)) || 0
@@ -326,28 +466,41 @@ defmodule SmmMonitor.TUI.Model do
     next =
       Enum.at(@config_fields, rem(index + delta + length(@config_fields), length(@config_fields)))
 
-    %{model | selected_field: next, flash: nil}
+    %{model | selected_field: next, flash: nil, confirm_remove: nil}
   end
 
   @doc """
-  Starts editing the selected field, seeding the buffer with its current
-  value so an edit is a correction rather than a retype.
+  Starts editing the highlighted field, seeding the buffer with its
+  current value so an edit is a correction rather than a retype.
   """
   @spec start_editing(t()) :: t()
-  def start_editing(%__MODULE__{read_only: true} = model) do
-    %{
-      model
-      | flash: {:error, "read-only session — config can only be changed from the host terminal"}
-    }
-  end
+  def start_editing(%__MODULE__{read_only: true} = model), do: refuse(model)
 
   def start_editing(%__MODULE__{} = model) do
-    %{
-      model
-      | editing: model.selected_field,
-        buffer: field_value(model, model.selected_field),
-        flash: nil
-    }
+    case highlighted_client(model) do
+      nil ->
+        %{model | flash: {:error, "no clients yet — press + to add one"}}
+
+      client ->
+        %{
+          model
+          | editing: model.selected_field,
+            buffer: field_value(client, model.selected_field),
+            confirm_remove: nil,
+            flash: nil
+        }
+    end
+  end
+
+  @doc """
+  Starts adding a client: types a name, and everything else is edited
+  afterwards from the same screen.
+  """
+  @spec start_adding(t()) :: t()
+  def start_adding(%__MODULE__{read_only: true} = model), do: refuse(model)
+
+  def start_adding(%__MODULE__{} = model) do
+    %{model | editing: :new_client, buffer: "", confirm_remove: nil, flash: nil}
   end
 
   @doc "Abandons an in-progress edit, leaving the stored value alone."
@@ -357,10 +510,10 @@ defmodule SmmMonitor.TUI.Model do
   end
 
   @doc """
-  Commits the buffer to `SmmMonitor.Config`.
+  Commits the buffer, either creating a client or updating a field.
 
-  A rejected value (an empty keyword list) leaves the editor open with the
-  reason shown, rather than dropping what was typed.
+  A rejected value leaves the editor open with the reason shown, rather
+  than dropping what was typed.
   """
   @spec commit_editing(t()) :: t()
   def commit_editing(%__MODULE__{editing: nil} = model), do: model
@@ -372,30 +525,134 @@ defmodule SmmMonitor.TUI.Model do
     %{model | editing: nil, buffer: "", flash: {:error, "read-only session — nothing was saved"}}
   end
 
-  def commit_editing(%__MODULE__{editing: field, buffer: buffer} = model) do
-    case write_field(field, buffer) do
-      {:ok, values} ->
+  def commit_editing(%__MODULE__{editing: :new_client, buffer: buffer} = model) do
+    # The name doubles as the first brand term, so a new client starts
+    # searching for something rather than nothing. Almost always right,
+    # and obvious to correct on the row below when it isn't.
+    case Clients.add(%{name: buffer, keywords: buffer}) do
+      {:ok, client} ->
+        model = refresh(%{model | editing: nil, buffer: ""})
+        index = Enum.find_index(model.clients, &(&1.id == client.id)) || 0
+
         %{
           model
-          | editing: nil,
-            buffer: "",
-            config: Map.put(model.config, field, values),
-            flash: {:ok, "#{label(field)} saved — fetchers pick this up on their next poll"}
+          | selected_client: index,
+            selected_field: :keywords,
+            flash: {:ok, "added #{client.name} — check its brand terms, then press s to view it"}
         }
 
       {:error, reason} ->
-        %{model | flash: {:error, error_message(field, reason)}}
+        %{model | flash: {:error, add_error_message(reason)}}
     end
   end
 
-  @doc "The current value of a config field, as the comma-separated text shown."
-  @spec field_value(t(), atom()) :: String.t()
-  def field_value(%__MODULE__{config: config}, field) do
-    config |> Map.get(field, []) |> Enum.join(", ")
+  def commit_editing(%__MODULE__{editing: field, buffer: buffer} = model) do
+    case highlighted_client(model) do
+      nil ->
+        %{model | editing: nil, buffer: "", flash: {:error, "that client is no longer there"}}
+
+      client ->
+        case Clients.update(client.id, %{field => buffer}) do
+          {:ok, updated} ->
+            %{refresh(%{model | editing: nil, buffer: ""}) | flash: saved_flash(field, updated)}
+
+          {:error, reason} ->
+            %{model | flash: {:error, error_message(field, reason)}}
+        end
+    end
   end
 
-  @doc "Human label for a config field."
+  @doc """
+  Asks to remove the highlighted client, or carries it out if the same
+  key is pressed twice.
+
+  Removing takes the client's mentions with it, so it needs two presses
+  rather than one.
+  """
+  @spec request_remove(t()) :: t()
+  def request_remove(%__MODULE__{read_only: true} = model), do: refuse(model)
+
+  def request_remove(%__MODULE__{} = model) do
+    case highlighted_client(model) do
+      nil ->
+        model
+
+      client ->
+        %{
+          model
+          | confirm_remove: client.id,
+            flash:
+              {:warning,
+               "remove #{client.name} and everything collected for it? press d again to confirm"}
+        }
+    end
+  end
+
+  @doc "Carries out a removal that has been confirmed."
+  @spec confirm_remove(t()) :: t()
+  def confirm_remove(%__MODULE__{read_only: true} = model), do: refuse(model)
+
+  def confirm_remove(%__MODULE__{confirm_remove: nil} = model), do: model
+
+  def confirm_remove(%__MODULE__{confirm_remove: id} = model) do
+    name = with %Client{name: name} <- Enum.find(model.clients, &(&1.id == id)), do: name
+
+    case Clients.remove(id) do
+      {:ok, deleted} ->
+        model = refresh(%{model | confirm_remove: nil, selected_client: 0})
+        %{model | flash: {:ok, "removed #{name} and #{deleted} mention(s)"}}
+
+      {:error, _reason} ->
+        %{model | confirm_remove: nil, flash: {:error, "could not remove that client"}}
+    end
+  end
+
+  @doc "Abandons a pending removal."
+  @spec cancel_remove(t()) :: t()
+  def cancel_remove(%__MODULE__{} = model) do
+    %{model | confirm_remove: nil, flash: {:info, "not removed"}}
+  end
+
+  @doc "Pauses or resumes the highlighted client. Paused clients aren't polled."
+  @spec toggle_active(t()) :: t()
+  def toggle_active(%__MODULE__{read_only: true} = model), do: refuse(model)
+
+  def toggle_active(%__MODULE__{} = model) do
+    case highlighted_client(model) do
+      nil ->
+        model
+
+      client ->
+        case Clients.set_active(client.id, not client.active) do
+          {:ok, updated} ->
+            verb = if updated.active, do: "resumed", else: "paused"
+            %{refresh(model) | flash: {:ok, "#{updated.name} #{verb}"}}
+
+          {:error, _reason} ->
+            %{model | flash: {:error, "could not change that client"}}
+        end
+    end
+  end
+
+  @doc "Switches the dashboard to the highlighted client."
+  @spec view_highlighted(t()) :: t()
+  def view_highlighted(%__MODULE__{} = model) do
+    case highlighted_client(model) do
+      nil -> model
+      client -> %{select_client(model, client.id) | flash: {:ok, "viewing #{client.name}"}}
+    end
+  end
+
+  @doc "The current value of a client's field, as the text shown."
+  @spec field_value(Client.t() | nil, atom()) :: String.t()
+  def field_value(nil, _field), do: ""
+  def field_value(%Client{name: name}, :name), do: name
+  def field_value(%Client{keywords: keywords}, :keywords), do: Enum.join(keywords, ", ")
+  def field_value(%Client{subreddits: subreddits}, :subreddits), do: Enum.join(subreddits, ", ")
+
+  @doc "Human label for a client field."
   @spec label(atom()) :: String.t()
+  def label(:name), do: "name"
   def label(:keywords), do: "brand terms"
   def label(:subreddits), do: "subreddits"
   def label(field), do: to_string(field)
@@ -419,12 +676,11 @@ defmodule SmmMonitor.TUI.Model do
 
   defp handle_edit_key(model, _key), do: model
 
-  defp write_field(:keywords, buffer), do: Config.put_keywords(buffer)
-  defp write_field(:subreddits, buffer), do: Config.put_subreddits(buffer)
-
   defp error_message(:keywords, :no_keywords),
     do: "at least one brand term is needed — nothing would be monitored"
 
+  defp error_message(:name, :missing_name), do: "a client needs a name"
+  defp error_message(:name, :name_too_long), do: "that name is too long to fit the dashboard"
   defp error_message(field, reason), do: "could not save #{label(field)}: #{inspect(reason)}"
 
   @doc """
@@ -444,32 +700,55 @@ defmodule SmmMonitor.TUI.Model do
 
   # Alerting may be switched off, in which case there is simply nothing
   # to show rather than an error to handle.
-  defp read_alerts do
-    Alerts.recent(SmmMonitor.Alerts, 10)
+  defp read_alerts(client) do
+    Alerts.recent(SmmMonitor.Alerts, 10, client)
   catch
     :exit, _reason -> []
   end
 
-  # The config screen reads through the same public API as everything else.
-  # A Config process that isn't running (a test rendering the model in
-  # isolation) shows empty rather than crashing the dashboard.
-  defp read_config do
-    Config.all()
+  # The dashboard reads through the same public API as everything else. A
+  # Clients process that isn't running (a test rendering the model in
+  # isolation) shows an empty list rather than crashing the dashboard.
+  defp read_clients do
+    Clients.list()
   catch
-    :exit, _reason -> %{keywords: [], subreddits: []}
+    :exit, _reason -> []
   end
 
-  defp config_source do
-    Config.source()
-  catch
-    :exit, _reason -> :unavailable
+  defp keywords_of(model) do
+    case current_client(model) do
+      nil -> []
+      client -> client.keywords
+    end
   end
 
-  defp config_path do
-    Config.path()
-  catch
-    :exit, _reason -> nil
+  # The highlight has to stay on a row that exists after a client is
+  # removed — by this session or another one.
+  defp clamp_selection(%__MODULE__{clients: []} = model), do: %{model | selected_client: 0}
+
+  defp clamp_selection(%__MODULE__{clients: clients} = model) do
+    %{model | selected_client: model.selected_client |> max(0) |> min(length(clients) - 1)}
   end
+
+  defp refuse(model) do
+    %{
+      model
+      | flash: {:error, "read-only session — clients can only be changed from the host terminal"}
+    }
+  end
+
+  defp saved_flash(:name, client) do
+    {:ok, "renamed to #{client.name} — its history and id are unchanged"}
+  end
+
+  defp saved_flash(field, _client) do
+    {:ok, "#{label(field)} saved — fetchers pick this up on their next poll"}
+  end
+
+  defp add_error_message(:missing_name), do: "a client needs a name"
+  defp add_error_message(:name_too_long), do: "that name is too long to fit the dashboard"
+  defp add_error_message(:no_keywords), do: "a client needs at least one brand term"
+  defp add_error_message(reason), do: "could not add that client (#{inspect(reason)})"
 
   # Offsets are clamped rather than rejected so that a shrinking list (after
   # a prune, or a tab switch) can never leave the table showing nothing.
