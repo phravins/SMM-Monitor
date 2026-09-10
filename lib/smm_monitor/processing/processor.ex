@@ -192,8 +192,14 @@ defmodule SmmMonitor.Processing.Processor do
   # Sentiment is computed once, on write, and stored on the struct. Reads are
   # then pure lookups — which is what makes a 1s TUI refresh cheap.
   defp score(%Mention{text: text} = mention) do
-    {sentiment, score} = Sentiment.analyze(text)
-    %{mention | sentiment: sentiment, sentiment_score: score}
+    result = Sentiment.score(text)
+
+    %{
+      mention
+      | sentiment: result.label,
+        sentiment_value: result.score,
+        sentiment_score: round(result.raw)
+    }
   end
 
   defp do_prune(state) do

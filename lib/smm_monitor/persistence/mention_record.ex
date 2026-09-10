@@ -28,6 +28,9 @@ defmodule SmmMonitor.Persistence.MentionRecord do
     # When the mention was published, per the platform.
     field(:source_timestamp, :utc_datetime_usec)
     field(:sentiment, :string)
+    # Normalised -1.0..1.0. Nullable: rows written before scoring became
+    # numeric have only the raw integer.
+    field(:sentiment_value, :float)
     field(:sentiment_score, :integer)
     field(:mock, :boolean, default: false)
     # When *we* stored it. Distinct from source_timestamp: a mention can
@@ -52,6 +55,7 @@ defmodule SmmMonitor.Persistence.MentionRecord do
       url: mention.url,
       source_timestamp: usec(mention.timestamp),
       sentiment: to_string(mention.sentiment),
+      sentiment_value: mention.sentiment_value,
       sentiment_score: mention.sentiment_score,
       mock: mention.mock,
       inserted_at: usec(now)
@@ -77,10 +81,19 @@ defmodule SmmMonitor.Persistence.MentionRecord do
       url: record.url,
       timestamp: record.source_timestamp,
       sentiment: sentiment_atom(record.sentiment),
+      sentiment_value: sentiment_value(record),
       sentiment_score: record.sentiment_score || 0,
       mock: record.mock || false
     }
   end
+
+  # Rows stored before scoring became numeric have no value. Rather than
+  # rescoring them — which would silently rewrite history when the word
+  # lists change — derive a rough one from the label they were given.
+  defp sentiment_value(%__MODULE__{sentiment_value: value}) when is_float(value), do: value
+  defp sentiment_value(%__MODULE__{sentiment: "positive"}), do: 0.5
+  defp sentiment_value(%__MODULE__{sentiment: "negative"}), do: -0.5
+  defp sentiment_value(%__MODULE__{}), do: 0.0
 
   # Only the three known labels are converted, so a corrupted or
   # hand-edited row can't crash the boot load with an unknown atom.
