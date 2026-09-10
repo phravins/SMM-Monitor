@@ -202,8 +202,8 @@ defmodule SmmMonitor.Fetchers.Instagram do
         run_source(source, context, acc, settings)
       end)
 
-    mentions = results |> Enum.flat_map(&elem(&1, 1)) |> dedupe()
-    failures = Enum.filter(results, &(elem(&1, 0) == :error))
+    {successes, failures} = Enum.split_with(results, &match?({:ok, _mentions}, &1))
+    mentions = successes |> Enum.flat_map(fn {:ok, mentions} -> mentions end) |> dedupe()
 
     cond do
       sources == [] ->
