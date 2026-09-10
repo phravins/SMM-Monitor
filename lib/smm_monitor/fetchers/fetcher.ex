@@ -4,7 +4,9 @@ defmodule SmmMonitor.Fetchers.Fetcher do
 
   A fetcher owns no processes and no timers: it is handed a context and its
   own state, and returns mentions plus the state to carry into the next
-  poll. All the process machinery — polling, scheduling, error handling,
+  poll. It is called once per client per poll, and knows nothing about
+  clients beyond the brand terms in its context — the worker stamps the
+  results with whose they are. All the process machinery — polling, scheduling, error handling,
   handing results to the processing layer — lives once in
   `SmmMonitor.Fetchers.Worker`, so a new platform is just this behaviour
   plus a line of config.
@@ -51,7 +53,10 @@ defmodule SmmMonitor.Fetchers.Fetcher do
   Everything a fetch needs, assembled by the worker on each poll.
 
     * `:platform`    — the platform atom
-    * `:keywords`    — brand terms to search for
+    * `:client`      — the `SmmMonitor.Client` being polled for, or `nil`
+      when there are none configured
+    * `:keywords`    — that client's brand terms
+    * `:subreddits`  — that client's subreddits, for Reddit
     * `:credentials` — from `config :smm_monitor, :credentials`
     * `:opts`        — the platform's `:opts` from config
     * `:poll_count`  — polls completed so far; 0 on the first one
@@ -60,7 +65,9 @@ defmodule SmmMonitor.Fetchers.Fetcher do
   """
   @type context :: %{
           platform: atom(),
+          client: SmmMonitor.Client.t() | nil,
           keywords: [String.t()],
+          subreddits: [String.t()],
           credentials: keyword(),
           opts: keyword(),
           poll_count: non_neg_integer(),

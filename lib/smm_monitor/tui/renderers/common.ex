@@ -118,16 +118,51 @@ defmodule SmmMonitor.TUI.Renderers.Common do
 
       # --- chrome ---------------------------------------------------------------
 
+      # The client comes first and in the accent colour: with several
+      # clients on one dashboard, "whose numbers am I looking at?" is the
+      # question the header has to answer before any other.
       defp top_bar(model) do
         mode = if model.mock_mode, do: "MOCK DATA", else: "LIVE"
-        brands = Enum.join(model.keywords, ", ")
+        {position, total} = Model.client_position(model)
 
         bar do
           label do
             text(content: " SMM MONITOR ", color: @accent, attributes: @bold)
-            text(content: "· watching: #{brands} ")
+            text(content: "· ", color: @muted)
+            text(content: client_name(model), color: @accent, attributes: @bold)
+            text(content: " #{position}/#{total} ", color: @muted)
+            text(content: "[", color: @muted)
+            text(content: "[/]", color: @accent, attributes: @bold)
+            text(content: "] ", color: @muted)
+            text(content: "· #{brands(model)} ", color: @muted)
             text(content: "· #{mode} ", color: mode_color(model.mock_mode))
             text(content: "· updated #{clock(model.updated_at)}", color: @muted)
+          end
+        end
+      end
+
+      defp client_name(model) do
+        case Model.current_client(model) do
+          nil -> "no client"
+          client -> SmmMonitor.Client.label(client)
+        end
+      end
+
+      defp brands(model) do
+        case Enum.join(model.keywords, ", ") do
+          "" -> "no brand terms"
+          brands -> truncate(brands, 40)
+        end
+      end
+
+      defp bottom_bar(%Model{editing: :new_client}) do
+        bar do
+          label do
+            text(content: " new client — ", color: @accent, attributes: @bold)
+            text(content: "Enter", color: @accent, attributes: @bold)
+            text(content: " add · ")
+            text(content: "Esc", color: @accent, attributes: @bold)
+            text(content: " cancel · the name doubles as the first brand term")
           end
         end
       end
@@ -148,14 +183,23 @@ defmodule SmmMonitor.TUI.Renderers.Common do
         bar do
           label do
             text(content: " j/k", color: @accent, attributes: @bold)
-            text(content: " select field · ")
+            text(content: " client · ")
+            text(content: "h/l", color: @accent, attributes: @bold)
+            text(content: " field · ")
             text(content: "e", color: @accent, attributes: @bold)
             text(content: "dit · ")
+            text(content: "+", color: @accent, attributes: @bold)
+            text(content: " add · ")
+            text(content: "d", color: @accent, attributes: @bold)
+            text(content: " remove · ")
+            text(content: "p", color: @accent, attributes: @bold)
+            text(content: " pause · ")
+            text(content: "s", color: @accent, attributes: @bold)
+            text(content: " view · ")
             text(content: "a", color: @accent, attributes: @bold)
-            text(content: " back to mentions · ")
+            text(content: " back · ")
             text(content: "q", color: @accent, attributes: @bold)
-            text(content: " quit · ")
-            text(content: worker_summary(model), color: @muted)
+            text(content: " quit")
           end
         end
       end
@@ -174,7 +218,9 @@ defmodule SmmMonitor.TUI.Renderers.Common do
             text(content: "y", color: @accent, attributes: @bold)
             text(content: "outube · ")
             text(content: "c", color: @accent, attributes: @bold)
-            text(content: "onfig · ")
+            text(content: "lients · ")
+            text(content: "[/]", color: @accent, attributes: @bold)
+            text(content: " switch client · ")
             text(content: "j/k", color: @accent, attributes: @bold)
             text(content: " scroll · ")
             text(content: "q", color: @accent, attributes: @bold)
@@ -267,19 +313,37 @@ defmodule SmmMonitor.TUI.Renderers.Common do
         end
       end
 
-      # --- config screen --------------------------------------------------------
+      # --- config screen: the client list ---------------------------------------
 
       defp config_panel(model) do
-        panel(
-          title: config_title(model),
-          height: :fill,
-          padding: 0
-        ) do
+        panel(title: config_title(model), height: :fill, padding: 0) do
           label(content: "")
 
-          Enum.map(Model.config_fields(), &config_field(model, &1))
+          label do
+            text(content: "  CLIENTS", color: @muted, attributes: @bold)
+
+            text(
+              content: "   #{length(model.clients)} configured",
+              color: @muted
+            )
+          end
 
           label(content: "")
+
+          if model.clients == [] do
+            [
+              label do
+                text(content: "  no clients yet — press ", color: @muted)
+                text(content: "+", color: @accent, attributes: @bold)
+                text(content: " to add one", color: @muted)
+              end
+            ]
+          else
+            Enum.with_index(model.clients, &client_block(model, &1, &2))
+          end
+
+          label(content: "")
+          adding_row(model)
 
           label do
             text(content: "  PLATFORM MODE", color: @muted, attributes: @bold)
@@ -301,7 +365,7 @@ defmodule SmmMonitor.TUI.Renderers.Common do
           label do
             if model.read_only do
               text(
-                content: "  read-only session — config is editable from the host terminal only",
+                content: "  read-only session — clients are editable from the host terminal only",
                 color: @accent
               )
             else
@@ -314,16 +378,59 @@ defmodule SmmMonitor.TUI.Renderers.Common do
         end
       end
 
-      # The selected row is marked with a caret and bold text, so the selection
-      # is visible on a terminal without colour too.
-      defp config_field(model, field) do
-        selected? = model.selected_field == field
-        editing? = model.editing == field
+      # One block per client: a header row carrying its number and state,
+      # then a row per editable field. A grid rather than a single line
+      # because brand terms and subreddits are both long enough to need
+      # the width.
+      defp client_block(model, client, index) do
+        highlighted? = model.selected_client == index and model.editing != :new_client
+        viewing? = model.client_id == client.id
+
+        [
+          label do
+            [
+              text(
+                content: "  #{if highlighted?, do: "▸", else: " "} #{index + 1}. ",
+                color: if(highlighted?, do: @accent, else: @muted),
+                attributes: if(highlighted?, do: @bold, else: [])
+              ),
+              text(
+                content: client.name,
+                color: client_color(client),
+                attributes: @bold
+              ),
+              text(content: "  (#{client.id})", color: @muted)
+            ] ++ client_badges(client, viewing?, model)
+          end
+        ] ++ Enum.map(Model.config_fields(), &client_field(model, client, index, &1))
+      end
+
+      defp client_badges(client, viewing?, model) do
+        [
+          if(viewing?, do: text(content: "  ● viewing", color: @accent), else: text(content: "")),
+          if(client.active,
+            do: text(content: ""),
+            else: text(content: "  ‖ paused — not polled", color: @neutral)
+          ),
+          if(model.confirm_remove == client.id,
+            do: text(content: "  press d again to remove", color: @negative, attributes: @bold),
+            else: text(content: "")
+          )
+        ]
+      end
+
+      defp client_field(model, client, index, field) do
+        selected? =
+          model.selected_client == index and model.selected_field == field and
+            model.editing != :new_client
+
+        editing? = selected? and model.editing == field
 
         label do
           text(
             content:
-              "  #{if selected?, do: "›", else: " "} #{String.pad_trailing(Model.label(field), 14)}",
+              "      #{if selected?, do: "›", else: " "} " <>
+                String.pad_trailing(Model.label(field), 13),
             color: if(selected?, do: @accent, else: @muted),
             attributes: if(selected?, do: @bold, else: [])
           )
@@ -338,21 +445,46 @@ defmodule SmmMonitor.TUI.Renderers.Common do
               text(content: "█", color: @accent)
             ]
           else
-            text(content: field_display(model, field))
+            text(content: field_display(client, field))
           end
         end
       end
 
-      defp config_title(%Model{read_only: true}), do: "config · read-only from this session"
+      # The new-client editor is a row of its own rather than a modal:
+      # the list stays visible, so it is obvious what is being added to.
+      defp adding_row(%Model{editing: :new_client} = model) do
+        [
+          label do
+            [
+              text(content: "  + name  ", color: @accent, attributes: @bold),
+              text(content: model.buffer, attributes: @bold),
+              text(content: "█", color: @accent),
+              text(content: "   (enter to add, esc to cancel)", color: @muted)
+            ]
+          end,
+          label(content: "")
+        ]
+      end
 
-      defp config_title(_model), do: "config · edit and fetchers pick it up next poll"
+      defp adding_row(_model), do: [label(content: "")]
 
-      defp field_display(model, field) do
-        case Model.field_value(model, field) do
-          "" -> "(none — searching everywhere)"
+      defp client_color(%{active: true}), do: @positive
+      defp client_color(_client), do: @neutral
+
+      defp config_title(%Model{read_only: true}), do: "clients · read-only from this session"
+
+      defp config_title(_model), do: "clients · changes are picked up on the next poll"
+
+      defp field_display(client, field) do
+        case Model.field_value(client, field) do
+          "" -> field_placeholder(field)
           value -> value
         end
       end
+
+      defp field_placeholder(:subreddits), do: "(none — searching all of Reddit)"
+      defp field_placeholder(:keywords), do: "(none — nothing will be found)"
+      defp field_placeholder(_field), do: "(none)"
 
       defp platform_status_row(status) do
         label do
@@ -377,20 +509,20 @@ defmodule SmmMonitor.TUI.Renderers.Common do
             {:info, message} ->
               text(content: "  #{message}", color: @muted)
 
+            {:warning, message} ->
+              text(content: "  ! #{message}", color: @negative, attributes: @bold)
+
             nil ->
-              text(
-                content: "  saved to #{model.config_path || "(unknown)"} #{source_note(model)}",
-                color: @muted
-              )
+              text(content: "  #{config_help()}", color: @muted)
           end
         end
       end
 
-      defp source_note(%Model{config_source: {:corrupt, _reason}}),
-        do: "· previous file was unreadable and has been kept as .corrupt"
-
-      defp source_note(%Model{config_source: :defaults}), do: "· not written yet, showing defaults"
-      defp source_note(_model), do: ""
+      # The screen has more verbs than the rest of the dashboard, so they
+      # are listed rather than left to be discovered.
+      defp config_help do
+        "j/k client · h/l field · e edit · + add · d remove · p pause · s view"
+      end
 
       defp mentions_table(model) do
         panel(title: mentions_title(model), height: :fill, padding: 0) do

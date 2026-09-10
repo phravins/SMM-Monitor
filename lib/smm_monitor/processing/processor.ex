@@ -223,7 +223,14 @@ defmodule SmmMonitor.Processing.Processor do
   # install until the first poll lands.
   defp load_history(state) do
     limit = SmmMonitor.config(:history_limit, 200)
-    restored = SmmMonitor.platforms() |> Persistence.recent_by_platform(limit) |> insert_all(state)
+
+    # Per client as well as per platform: one global "last N" would hand
+    # the whole allowance to the busiest client and leave every other
+    # client's dashboard empty until their first poll landed.
+    restored =
+      client_ids()
+      |> Persistence.recent_by_client_and_platform(SmmMonitor.platforms(), limit)
+      |> insert_all(state)
 
     if restored > 0 do
       Logger.info("database: restored #{restored} mention(s) from previous runs")
@@ -234,5 +241,14 @@ defmodule SmmMonitor.Processing.Processor do
 
   defp insert_all(mentions, state) do
     Enum.count(mentions, fn mention -> Store.insert(state.table, mention) == :inserted end)
+  end
+
+  # The processor starts after Clients, but a test may run it alone; an
+  # unavailable list means "restore the holding client" rather than
+  # crashing the boot.
+  defp client_ids do
+    SmmMonitor.Clients.ids()
+  catch
+    :exit, _reason -> [SmmMonitor.Mention.default_client_id()]
   end
 end

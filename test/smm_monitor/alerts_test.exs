@@ -209,7 +209,7 @@ defmodule SmmMonitor.AlertsTest do
       stats = Alerts.stats(alerts)
       assert stats.evaluations == 1
       assert stats.raised == 1
-      assert {:reddit, :negative_spike} in stats.cooling_down
+      assert {"unassigned", :reddit, :negative_spike} in stats.cooling_down
       assert %DateTime{} = stats.last_evaluated_at
     end
   end

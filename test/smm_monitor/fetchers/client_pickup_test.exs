@@ -1,37 +1,29 @@
-defmodule SmmMonitor.Fetchers.ConfigPickupTest do
+defmodule SmmMonitor.Fetchers.ClientPickupTest do
   @moduledoc """
-  The promise the config screen makes: change a brand term, and the very
-  next poll searches for the new one — no restart.
+  The promise the config screen makes: edit a client, and the very next
+  poll searches for the new terms — no restart.
 
   Covered at two levels. The worker level proves the whole loop with real
   workers and the mock fetchers; the fetcher level proves the live Reddit
-  and YouTube requests carry the new term, using their stub transports so
-  nothing touches the network.
+  and YouTube requests carry the client's terms, using their stub
+  transports so nothing touches the network.
   """
 
-  use ExUnit.Case, async: false
+  use SmmMonitor.ClientCase, async: false
 
   import ExUnit.CaptureLog
 
-  alias SmmMonitor.{Config, Monitor}
   alias SmmMonitor.Fetchers.{PlatformSupervisor, Reddit, Worker, YouTube}
-  alias SmmMonitor.{RedditStub, YouTubeStub}
+  alias SmmMonitor.{Monitor, RedditStub, YouTubeStub}
 
   setup do
-    original = Config.all()
     Monitor.reset()
-
-    on_exit(fn ->
-      Config.put_keywords(original.keywords)
-      Config.put_subreddits(original.subreddits)
-    end)
-
     :ok
   end
 
   describe "a running worker" do
     test "searches for the new term on its next poll" do
-      Config.put_keywords("originalterm")
+      client = only_client(keywords: "originalterm")
 
       capture_log(fn ->
         start_supervised!(
@@ -45,7 +37,7 @@ defmodule SmmMonitor.Fetchers.ConfigPickupTest do
       assert mentions_mentioning("originalterm") > 0
 
       # The change a user would make from the config screen.
-      Config.put_keywords("replacementterm")
+      {:ok, _updated} = Clients.update(client.id, %{keywords: "replacementterm"})
       Monitor.reset()
 
       # A mock poll yields 0-2 mentions, so drive polls until some arrive
@@ -57,7 +49,7 @@ defmodule SmmMonitor.Fetchers.ConfigPickupTest do
     end
 
     test "picks it up without restarting the worker" do
-      Config.put_keywords("beforechange")
+      client = only_client(keywords: "beforechange")
 
       capture_log(fn ->
         start_supervised!(
@@ -70,7 +62,7 @@ defmodule SmmMonitor.Fetchers.ConfigPickupTest do
 
       pid = Process.whereis(Worker.name(:youtube))
 
-      Config.put_keywords("afterchange")
+      {:ok, _updated} = Clients.update(client.id, %{keywords: "afterchange"})
       Monitor.reset()
 
       assert poll_until(:youtube, fn -> mentions_mentioning("afterchange") > 0 end)
@@ -80,34 +72,54 @@ defmodule SmmMonitor.Fetchers.ConfigPickupTest do
   end
 
   describe "the live Reddit request" do
-    test "carries the current keywords and subreddits" do
-      Config.put_keywords("liveterm")
-      Config.put_subreddits("configuredsub")
+    test "carries the client's keywords and subreddits" do
+      client = only_client(keywords: "liveterm", subreddits: "configuredsub")
 
       RedditStub.install(
         token: RedditStub.token(),
         search: RedditStub.listing(%{"data" => %{"children" => []}})
       )
 
-      Reddit.fetch(reddit_context(), Reddit.State.new())
+      Reddit.fetch(reddit_context(client), Reddit.State.new())
 
       assert [{:get, url}] = RedditStub.search_requests()
       query = url |> URI.parse() |> Map.get(:query) |> URI.decode_query()
 
       assert query["q"] == "liveterm"
-      # The subreddit list from the config screen, not the compile-time one.
+      # The subreddit list from this client, not a global one.
       assert url =~ "/r/configuredsub/search"
     end
 
-    test "reflects a subreddit list cleared to empty" do
-      Config.put_subreddits("")
+    test "each client gets its own subreddits" do
+      # One client's brand lives in r/marketing and another's in
+      # r/gamedev; searching both lists for both returns noise for each.
+      acme = build_client("Acme", subreddits: ["marketing"])
+      beta = build_client("Beta", subreddits: ["gamedev"])
+      set_clients([acme, beta])
 
       RedditStub.install(
         token: RedditStub.token(),
         search: RedditStub.listing(%{"data" => %{"children" => []}})
       )
 
-      Reddit.fetch(reddit_context(), Reddit.State.new())
+      Reddit.fetch(reddit_context(acme), Reddit.State.new())
+      Reddit.fetch(reddit_context(beta), Reddit.State.new())
+
+      urls = Enum.map(RedditStub.search_requests(), fn {:get, url} -> url end)
+
+      assert Enum.any?(urls, &(&1 =~ "/r/marketing/search"))
+      assert Enum.any?(urls, &(&1 =~ "/r/gamedev/search"))
+    end
+
+    test "reflects a subreddit list cleared to empty" do
+      client = only_client(subreddits: "")
+
+      RedditStub.install(
+        token: RedditStub.token(),
+        search: RedditStub.listing(%{"data" => %{"children" => []}})
+      )
+
+      Reddit.fetch(reddit_context(client), Reddit.State.new())
 
       assert [{:get, url}] = RedditStub.search_requests()
       # Empty means search all of Reddit.
@@ -116,21 +128,22 @@ defmodule SmmMonitor.Fetchers.ConfigPickupTest do
   end
 
   describe "the live YouTube request" do
-    test "carries the current keywords" do
-      Config.put_keywords("ytterm, yt phrase")
+    test "carries the client's keywords" do
+      client = only_client(keywords: "ytterm, yt phrase")
 
       YouTubeStub.install(YouTubeStub.results(%{"items" => []}))
 
-      YouTube.fetch(youtube_context(), YouTube.State.new())
+      YouTube.fetch(youtube_context(client), YouTube.State.new())
 
       assert YouTubeStub.query_params()["q"] == ~s(ytterm | "yt phrase")
     end
   end
 
-  describe "Config as the single source of truth" do
-    test "both live platforms search for the same brand terms" do
-      # The point of one shared setting rather than a per-platform one.
-      Config.put_keywords("sharedterm")
+  describe "the client as the single source of truth" do
+    test "every platform searches for the same client's brand terms" do
+      # The point of the terms living on the client rather than per
+      # platform: one edit changes what every platform looks for.
+      client = only_client(keywords: "sharedterm")
 
       RedditStub.install(
         token: RedditStub.token(),
@@ -139,8 +152,8 @@ defmodule SmmMonitor.Fetchers.ConfigPickupTest do
 
       YouTubeStub.install(YouTubeStub.results(%{"items" => []}))
 
-      Reddit.fetch(reddit_context(), Reddit.State.new())
-      YouTube.fetch(youtube_context(), YouTube.State.new())
+      Reddit.fetch(reddit_context(client), Reddit.State.new())
+      YouTube.fetch(youtube_context(client), YouTube.State.new())
 
       [{:get, reddit_url}] = RedditStub.search_requests()
 
@@ -153,10 +166,18 @@ defmodule SmmMonitor.Fetchers.ConfigPickupTest do
 
   # --- helpers --------------------------------------------------------------
 
-  defp reddit_context do
+  # One client, so "what is the worker searching for" has one answer.
+  defp only_client(overrides) do
+    [client] = set_clients([build_client("Acme", overrides)])
+    client
+  end
+
+  defp reddit_context(client) do
     %{
       platform: :reddit,
-      keywords: Config.keywords(),
+      client: client,
+      keywords: client.keywords,
+      subreddits: client.subreddits,
       credentials: [client_id: "id", client_secret: "secret"],
       opts: [req_options: RedditStub.req_options()],
       poll_count: 0,
@@ -164,10 +185,12 @@ defmodule SmmMonitor.Fetchers.ConfigPickupTest do
     }
   end
 
-  defp youtube_context do
+  defp youtube_context(client) do
     %{
       platform: :youtube,
-      keywords: Config.keywords(),
+      client: client,
+      keywords: client.keywords,
+      subreddits: [],
       credentials: [api_key: "key"],
       opts: [req_options: YouTubeStub.req_options()],
       poll_count: 0,

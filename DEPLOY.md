@@ -175,7 +175,8 @@ directory:
 | --- | --- | --- |
 | Mention database | `/var/lib/smm-monitor/mentions.db` | ✅ |
 | SSH host key | `/var/lib/smm-monitor/ssh/` | ✅ — so nobody gets a `known_hosts` warning |
-| Runtime config (brand terms) | `/etc/smm-monitor/config.json` | ✅ |
+| Clients, brand terms and every mention | `/var/lib/smm-monitor/mentions.db` | ✅ |
+| Legacy single-brand config | `/etc/smm-monitor/config.json` | ✅ — read once on upgrade |
 | Authorized keys | `/etc/smm-monitor/authorized_keys` | ✅ |
 | Secrets | `/etc/smm-monitor/env` | ✅ |
 | Tuned sentiment word lists | `/etc/smm-monitor/sentiment/` | ✅ |
@@ -199,9 +200,41 @@ before you ship it.
 sudo systemctl restart smm-monitor
 ```
 
-Secrets, ports and poll intervals are read at boot. The **brand terms and
-subreddits are not** — change those live from the config screen, no
-restart needed (see the README).
+Secrets, ports and poll intervals are read at boot. **Clients, their
+brand terms and their subreddits are not** — add, edit and pause those
+live from the clients screen (`c`), no restart needed (see the README).
+
+### Upgrading to the multi-client version
+
+There is nothing to do, and nothing to back up beyond your usual copy of
+`mentions.db`. On the first boot after the deploy:
+
+* the migration adds `client_id` to the `mentions` table, creates the
+  `clients` table, and assigns every existing mention to a holding
+  client. It logs how many it moved:
+
+  ```
+  scope_mentions_to_clients: assigned 48213 existing mention(s) to the
+  "Unassigned" client
+  ```
+
+* that client is then named from whatever brand you were tracking, read
+  from `/etc/smm-monitor/config.json` (falling back to `SMM_KEYWORDS`):
+
+  ```
+  clients: no clients stored yet - created "Real office" from the previous
+  single-brand settings (config_file): realoffice, real office
+  ```
+
+Both lines are worth grepping for after the deploy — together they say
+your history survived and is attached to a client that is still being
+polled for.
+
+The config file is left untouched and never written to again, so a
+rollback to the previous release is a symlink swap as usual. The one
+caveat is the usual one for migrations: the old release doesn't know
+about `client_id`, but the column is additive and nullable to it, so it
+keeps working.
 
 ### Tuning the sentiment word lists
 
@@ -329,7 +362,7 @@ missing, or `SMM_MOCK_REDDIT` / `SMM_MOCK_YOUTUBE` is not `false`.
 | `/opt/smm-monitor/current` | `root` | Symlink to the live version. |
 | `/etc/smm-monitor/env` | `root:smm-monitor` `0640` | Secrets. Read at boot. |
 | `/etc/smm-monitor/authorized_keys` | `root:smm-monitor` | Who may view the dashboard. |
-| `/etc/smm-monitor/config.json` | `smm-monitor` | Brand terms, written by the config screen. |
+| `/etc/smm-monitor/config.json` | `smm-monitor` | Legacy single-brand config. Read once on upgrade to seed the first client, then never written again. |
 | `/etc/smm-monitor/sentiment/` | `root:smm-monitor` | Word lists overriding the packaged ones. Optional. |
 | `/var/lib/smm-monitor/mentions.db` | `smm-monitor` `0750` | Collected mentions. |
 | `/var/lib/smm-monitor/ssh/` | `smm-monitor` | SSH host key. |

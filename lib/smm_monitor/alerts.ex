@@ -6,9 +6,14 @@ defmodule SmmMonitor.Alerts do
   part that answers "is something wrong *right now*?" — the difference
   between a dashboard someone remembers to open and one that finds them.
 
-  Every minute it compares each platform's recent negative mentions
-  against that platform's own normal, drawn from stored history, and
-  raises an alert when the two diverge far enough.
+  Every minute it compares each **client's** recent negative mentions on
+  each platform against that client's own normal for that platform,
+  drawn from stored history, and raises an alert when the two diverge far
+  enough.
+
+  Per client, not per platform alone: one client having a bad afternoon
+  averaged against four quiet ones is a number nobody can act on, and the
+  first thing anyone asks about an alert is whose brand it concerns.
   `SmmMonitor.Alerts.Detector` holds the judgement and is pure; this
   process holds the clock, the cooldowns and the notifier fan-out.
 
@@ -16,9 +21,10 @@ defmodule SmmMonitor.Alerts do
 
   A spike lasts longer than one evaluation, so without a cooldown a
   single bad afternoon would post to Slack sixty times an hour. Each
-  platform's alert is therefore rate-limited (one hour by default), and
-  the cooldown clears once the platform falls back below threshold — so a
-  genuinely new spike after a recovery alerts again immediately.
+  client-and-platform alert is therefore rate-limited (one hour by
+  default), and the cooldown clears once that pair falls back below
+  threshold — so a genuinely new spike after a recovery alerts again
+  immediately, and one client's spike never silences another's.
 
   ## Failure policy
 
@@ -34,7 +40,7 @@ defmodule SmmMonitor.Alerts do
 
   alias SmmMonitor.Alerts.{Alert, Detector}
   alias SmmMonitor.Alerts.Notifiers.{LogNotifier, WebhookNotifier}
-  alias SmmMonitor.{Monitor, Persistence}
+  alias SmmMonitor.{Client, Clients, Monitor, Persistence}
 
   @evaluate_interval_ms :timer.minutes(1)
   @default_window_ms :timer.hours(1)
@@ -70,9 +76,9 @@ defmodule SmmMonitor.Alerts do
   Read by the dashboard's banner. Returns `[]` if alerting isn't running,
   so callers never have to check first.
   """
-  @spec recent(GenServer.server(), pos_integer()) :: [Alert.t()]
-  def recent(server \\ __MODULE__, limit \\ 10) do
-    GenServer.call(server, {:recent, limit})
+  @spec recent(GenServer.server(), pos_integer(), String.t() | :all) :: [Alert.t()]
+  def recent(server \\ __MODULE__, limit \\ 10, client \\ :all) do
+    GenServer.call(server, {:recent, limit, client})
   catch
     :exit, _reason -> []
   end
@@ -130,8 +136,13 @@ defmodule SmmMonitor.Alerts do
   end
 
   @impl true
-  def handle_call({:recent, limit}, _from, state) do
-    {:reply, Enum.take(state.recent, limit), state}
+  def handle_call({:recent, limit, client}, _from, state) do
+    alerts =
+      state.recent
+      |> Enum.filter(&matches_client?(&1, client))
+      |> Enum.take(limit)
+
+    {:reply, alerts, state}
   end
 
   @impl true
@@ -152,27 +163,47 @@ defmodule SmmMonitor.Alerts do
   end
 
   # --- internals ------------------------------------------------------------
+  # An alert raised before clients existed has no client_id; showing it
+  # everywhere beats hiding it.
+  defp matches_client?(_alert, :all), do: true
+  defp matches_client?(%Alert{client_id: nil}, _client), do: true
+  defp matches_client?(%Alert{client_id: id}, id), do: true
+  defp matches_client?(%Alert{}, _client), do: false
 
   defp run(state) do
     now = DateTime.utc_now()
+    pairs = for client <- clients(), platform <- SmmMonitor.platforms(), do: {client, platform}
 
     {alerts, state} =
-      Enum.reduce(SmmMonitor.platforms(), {[], state}, fn platform, {alerts, state} ->
-        case evaluate_platform(platform, now) do
-          {:alert, alert} -> raise_alert(alert, alerts, state, now)
-          {:ok, _reason} -> {alerts, clear_cooldown(state, platform)}
+      Enum.reduce(pairs, {[], state}, fn {client, platform}, {alerts, state} ->
+        case evaluate_platform(client, platform, now) do
+          {:alert, alert} -> raise_alert(with_client(alert, client), alerts, state, now)
+          {:ok, _reason} -> {alerts, clear_cooldown(state, client, platform)}
         end
       end)
 
     {Enum.reverse(alerts), %{state | evaluations: state.evaluations + 1, last_evaluated_at: now}}
   end
 
-  defp evaluate_platform(platform, now) do
+  # Paused clients are not polled, so their window empties and every
+  # evaluation would read as a recovery. Skipping them keeps the counters
+  # honest about what is actually being watched.
+  defp clients do
+    Clients.active()
+  catch
+    :exit, _reason -> []
+  end
+
+  defp with_client(alert, %Client{} = client) do
+    %{alert | client_id: client.id, client_name: client.name}
+  end
+
+  defp evaluate_platform(%Client{id: client_id}, platform, now) do
     window_ms = SmmMonitor.config(:alert_window_ms, @default_window_ms)
     baseline_days = SmmMonitor.config(:alert_baseline_days, @default_baseline_days)
 
-    current = Monitor.stats(platform, window_ms)
-    {baseline, history_ms} = baseline(platform, baseline_days, window_ms, now)
+    current = Monitor.stats(platform, window_ms, client_id)
+    {baseline, history_ms} = baseline(client_id, platform, baseline_days, window_ms, now)
 
     Detector.evaluate(
       %{
@@ -190,12 +221,12 @@ defmodule SmmMonitor.Alerts do
   # The baseline deliberately comes from stored history rather than ETS:
   # ETS holds a rolling window measured in hours, which is not long enough
   # to say what "normal" looks like.
-  defp baseline(platform, baseline_days, window_ms, now) do
+  defp baseline(client_id, platform, baseline_days, window_ms, now) do
     history_ms = baseline_days * 24 * 3_600 * 1_000
     cutoff = DateTime.add(now, -history_ms, :millisecond)
 
-    counts = Persistence.sentiment_counts_since(cutoff, platform)
-    available_ms = available_history_ms(platform, now, history_ms)
+    counts = Persistence.sentiment_counts_since(cutoff, platform, client: client_id)
+    available_ms = available_history_ms(client_id, platform, now, history_ms)
 
     if counts.total == 0 do
       {nil, available_ms}
@@ -208,8 +239,8 @@ defmodule SmmMonitor.Alerts do
   # day-old install must not have its 24 hours treated as a week, or the
   # baseline would read seven times lower than reality and everything
   # would look like a spike.
-  defp available_history_ms(platform, now, requested_ms) do
-    case Persistence.earliest_timestamp(platform) do
+  defp available_history_ms(client_id, platform, now, requested_ms) do
+    case Persistence.earliest_timestamp(platform, client: client_id) do
       nil -> 0
       earliest -> now |> DateTime.diff(earliest, :millisecond) |> max(0) |> min(requested_ms)
     end
@@ -244,8 +275,8 @@ defmodule SmmMonitor.Alerts do
   # Recovering below threshold clears the cooldown, so a genuinely new
   # spike after a quiet spell alerts immediately rather than waiting out
   # the remainder of an old one.
-  defp clear_cooldown(state, platform) do
-    %{state | cooldowns: Map.delete(state.cooldowns, {platform, :negative_spike})}
+  defp clear_cooldown(state, %Client{id: client_id}, platform) do
+    %{state | cooldowns: Map.delete(state.cooldowns, {client_id, platform, :negative_spike})}
   end
 
   # Each channel is called inside its own try: one broken notifier must

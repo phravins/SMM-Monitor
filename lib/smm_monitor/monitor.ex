@@ -2,10 +2,17 @@ defmodule SmmMonitor.Monitor do
   @moduledoc """
   Public API over the processing layer.
 
-  Fetchers write through `record/1`; the TUI reads through `stats/2`,
-  `recent/2` and `breakdown/1`. Nothing outside this module should need to
+  Fetchers write through `record/1`; the TUI reads through `stats/3`,
+  `recent/3` and `breakdown/2`. Nothing outside this module should need to
   know that mentions live in ETS or that a GenServer owns the table — which
   is what makes the storage swappable later.
+
+  ## Client scope
+
+  Every read takes a client id, or `:all` to read across the whole book.
+  The dashboard always passes the selected client: "all platforms" means
+  all of *this client's* platforms, never every client mixed together,
+  which would be a number nobody could act on.
   """
 
   alias SmmMonitor.Mention
@@ -13,8 +20,11 @@ defmodule SmmMonitor.Monitor do
 
   @type window :: pos_integer() | :all
 
+  @type client_scope :: String.t() | :all
+
   @type stats :: %{
           platform: atom(),
+          client: client_scope(),
           count: non_neg_integer(),
           positive: non_neg_integer(),
           neutral: non_neg_integer(),
@@ -41,10 +51,10 @@ defmodule SmmMonitor.Monitor do
   `platform` is `:all` or a platform atom; `window` is a duration in
   milliseconds (defaults to the configured `:window_ms`) or `:all`.
   """
-  @spec stats(atom(), window()) :: stats()
-  def stats(platform \\ :all, window \\ nil) do
+  @spec stats(atom(), window(), client_scope()) :: stats()
+  def stats(platform \\ :all, window \\ nil, client \\ :all) do
     window = window || SmmMonitor.config(:window_ms, :timer.hours(24))
-    mentions = Store.all(table(), platform, since(window))
+    mentions = Store.all(table(), platform, since: since(window), client: client)
 
     empty = %{positive: 0, neutral: 0, negative: 0, score: 0, value: 0.0}
 
@@ -60,6 +70,7 @@ defmodule SmmMonitor.Monitor do
 
     tally
     |> Map.put(:platform, platform)
+    |> Map.put(:client, client)
     |> Map.put(:count, count)
     |> Map.put(:average, average(tally.value, count))
     |> Map.put(:window_ms, window)
@@ -77,22 +88,23 @@ defmodule SmmMonitor.Monitor do
   Always includes every configured platform, so a quiet platform shows `0`
   rather than disappearing from the UI.
   """
-  @spec breakdown(window()) :: %{atom() => non_neg_integer()}
-  def breakdown(window \\ nil) do
+  @spec breakdown(window(), client_scope()) :: %{atom() => non_neg_integer()}
+  def breakdown(window \\ nil, client \\ :all) do
     window = window || SmmMonitor.config(:window_ms, :timer.hours(24))
     since = since(window)
 
     Map.new(SmmMonitor.platforms(), fn platform ->
-      {platform, Store.count(table(), platform, since)}
+      {platform, Store.count(table(), platform, since: since, client: client)}
     end)
   end
 
-  @doc "Most recent mentions for a platform, newest first."
-  @spec recent(atom(), pos_integer()) :: [Mention.t()]
-  def recent(platform \\ :all, limit \\ 100) do
+  @doc "Most recent mentions for a platform and client, newest first."
+  @spec recent(atom(), pos_integer(), client_scope()) :: [Mention.t()]
+  def recent(platform \\ :all, limit \\ 100, client \\ :all) do
     Store.recent(table(), platform,
       limit: limit,
-      since: since(SmmMonitor.config(:window_ms, :timer.hours(24)))
+      since: since(SmmMonitor.config(:window_ms, :timer.hours(24))),
+      client: client
     )
   end
 

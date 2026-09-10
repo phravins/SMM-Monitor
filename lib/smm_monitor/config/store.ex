@@ -1,6 +1,16 @@
 defmodule SmmMonitor.Config.Store do
   @moduledoc """
-  Reads and writes the runtime config file.
+  Reads and writes the **legacy** single-brand config file.
+
+  Superseded by `SmmMonitor.Clients`, which keeps clients in SQLite
+  alongside the mentions that reference them. This module survives for
+  one job: `SmmMonitor.Clients.Seed` reads the file on first boot so an
+  install that was tracking one brand carries that brand across the
+  upgrade instead of waking up monitoring nothing.
+
+  The file is never written to again. It is left on disk untouched, so
+  rolling back to the previous release is a downgrade rather than a
+  restore from backup.
 
   A small JSON document holding only the settings a person can change from
   the dashboard:
@@ -12,8 +22,8 @@ defmodule SmmMonitor.Config.Store do
         "updated_at": "2026-09-10T09:15:00Z"
       }
 
-  Credentials are deliberately *not* in here. They stay in the environment,
-  so this file is safe to read, diff, and hand to someone.
+  Credentials were deliberately never in here. They stay in the
+  environment, so this file is safe to read, diff, and hand to someone.
 
   ## Where it lives
 
