@@ -143,7 +143,33 @@ defmodule SmmMonitor.MonitorTest do
     test "carries the sentiment assigned at ingest" do
       Monitor.record(attrs(id: "a", text: "really terrible experience"))
 
-      assert [%{sentiment: :negative, sentiment_score: -2}] = Monitor.recent()
+      assert [mention] = Monitor.recent()
+      assert mention.sentiment == :negative
+      assert mention.sentiment_value < 0
+      assert mention.sentiment_score < 0
+    end
+  end
+
+  describe "stats/2 sentiment" do
+    test "reports the mean normalised score, not a total" do
+      Monitor.record_many([
+        attrs(id: "a", text: "excellent work"),
+        attrs(id: "b", text: "excellent work again")
+      ])
+
+      stats = Monitor.stats()
+
+      assert stats.average > 0
+      # The mean must not climb just because more people said the same
+      # thing: two identical raves score the same as one.
+      Monitor.record_many([attrs(id: "c", text: "excellent work once more")])
+
+      assert_in_delta Monitor.stats().average, stats.average, 0.001
+    end
+
+    test "is zero when there is nothing to average" do
+      assert Monitor.stats().average == 0.0
+      assert Monitor.stats().count == 0
     end
   end
 

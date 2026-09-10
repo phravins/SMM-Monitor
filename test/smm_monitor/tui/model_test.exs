@@ -203,6 +203,54 @@ defmodule SmmMonitor.TUI.ModelTest do
     end
   end
 
+  describe "sentiment_gauge/2" do
+    test "sits at the centre with no mentions" do
+      assert {12, 0, 0, 12} = Model.sentiment_gauge(Model.new(), 25)
+    end
+
+    test "fills to the right of centre when the mean is positive" do
+      Monitor.record_many([
+        attrs(id: "a", text: "excellent, brilliant work"),
+        attrs(id: "b", text: "fantastic support")
+      ])
+
+      {left_pad, negative, positive, right_pad} = Model.sentiment_gauge(Model.new(), 25)
+
+      assert negative == 0
+      assert positive > 0
+      assert left_pad == 12
+      assert positive + right_pad == 12
+    end
+
+    test "fills to the left of centre when the mean is negative" do
+      Monitor.record_many([
+        attrs(id: "a", text: "terrible, the worst"),
+        attrs(id: "b", text: "broken and useless")
+      ])
+
+      {left_pad, negative, positive, right_pad} = Model.sentiment_gauge(Model.new(), 25)
+
+      assert positive == 0
+      assert negative > 0
+      assert right_pad == 12
+      assert left_pad + negative == 12
+    end
+
+    test "never rounds a real opinion down to an empty bar" do
+      # A faint mean is still a mean; showing nothing would read as "no
+      # feeling either way", which is a different claim.
+      model = %Model{Model.new() | stats: %{Model.new().stats | count: 1, average: 0.01}}
+
+      assert {12, 0, 1, 11} = Model.sentiment_gauge(model, 25)
+    end
+
+    test "the label matches the scorer's own neutral band" do
+      Monitor.record_many([attrs(id: "a", text: "excellent, brilliant work")])
+
+      assert Model.average_label(Model.new()) == :positive
+    end
+  end
+
   describe "tab_label/2" do
     test "shows per-platform counts, and their total for 'all'" do
       Monitor.record_many([
