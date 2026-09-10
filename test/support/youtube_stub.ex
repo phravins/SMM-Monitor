@@ -65,6 +65,41 @@ defmodule SmmMonitor.YouTubeStub do
     )
   end
 
+  @doc """
+  The 400 Google actually returns for an invalid API key.
+
+  Copied from a real response: the machine-readable `reason` is only
+  `"badRequest"`, and the useful part lives in the message and the
+  `details` entry.
+  """
+  def invalid_key_error do
+    Req.Response.new(
+      status: 400,
+      body: %{
+        "error" => %{
+          "code" => 400,
+          "message" => "API key not valid. Please pass a valid API key.",
+          "errors" => [
+            %{
+              "message" => "API key not valid. Please pass a valid API key.",
+              "domain" => "global",
+              "reason" => "badRequest"
+            }
+          ],
+          "status" => "INVALID_ARGUMENT",
+          "details" => [
+            %{
+              "@type" => "type.googleapis.com/google.rpc.ErrorInfo",
+              "reason" => "API_KEY_INVALID",
+              "domain" => "googleapis.com",
+              "metadata" => %{"service" => "youtube.googleapis.com"}
+            }
+          ]
+        }
+      }
+    )
+  end
+
   @doc false
   def run(request) do
     state = Process.get(@key) || %{responses: [], requests: []}

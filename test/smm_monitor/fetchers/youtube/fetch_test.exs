@@ -184,11 +184,26 @@ defmodule SmmMonitor.Fetchers.YouTube.FetchTest do
       assert {:error, {:forbidden, "keyInvalid"}, _state} = YouTube.fetch(context(), State.new())
     end
 
-    test "reports a malformed request with Google's reason" do
+    test "reports a malformed request with Google's reason and message" do
       YouTubeStub.install(YouTubeStub.error(400, "invalidSearchFilter"))
 
-      assert {:error, {:bad_request, "invalidSearchFilter"}, _state} =
+      assert {:error, {:bad_request, "invalidSearchFilter", message}, _state} =
                YouTube.fetch(context(), State.new())
+
+      assert message =~ "invalidSearchFilter"
+    end
+
+    test "calls out an invalid API key specifically" do
+      # This is the real 400 you get from Google with a bad key. Its
+      # machine reason is just "badRequest" — the useful part is in the
+      # message and the details, so the error has to carry it or the log
+      # tells you nothing actionable.
+      YouTubeStub.install(YouTubeStub.invalid_key_error())
+
+      assert {:error, {:invalid_api_key, message}, _state} =
+               YouTube.fetch(context(), State.new())
+
+      assert message =~ "API key not valid"
     end
 
     test "reports other HTTP errors with the status" do

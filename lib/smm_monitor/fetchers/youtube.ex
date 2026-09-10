@@ -196,8 +196,16 @@ defmodule SmmMonitor.Fetchers.YouTube do
     end
   end
 
+  # An invalid key is by far the most likely 400, and Google buries the
+  # useful part ("API key not valid") in a message while the machine
+  # reason is just "badRequest". Surface it as its own error so the log
+  # tells you what to fix, the way Reddit's :invalid_credentials does.
   defp handle_response({:ok, %{status: 400, body: body}}, state) do
-    {:error, {:bad_request, google_reason(body) || :unknown}, state}
+    if invalid_key?(body) do
+      {:error, {:invalid_api_key, google_message(body)}, state}
+    else
+      {:error, {:bad_request, google_reason(body) || :unknown, google_message(body)}, state}
+    end
   end
 
   defp handle_response({:ok, %{status: status}}, state) do
@@ -290,6 +298,20 @@ defmodule SmmMonitor.Fetchers.YouTube do
   defp google_reason(%{"error" => %{"errors" => [%{"reason" => reason} | _rest]}}), do: reason
   defp google_reason(%{"error" => %{"status" => status}}) when is_binary(status), do: status
   defp google_reason(_body), do: nil
+
+  defp google_message(%{"error" => %{"message" => message}}) when is_binary(message), do: message
+  defp google_message(_body), do: nil
+
+  # Google reports this in a details entry rather than the top-level reason.
+  defp invalid_key?(%{"error" => %{"details" => details}}) when is_list(details) do
+    Enum.any?(details, &(is_map(&1) and &1["reason"] == "API_KEY_INVALID"))
+  end
+
+  defp invalid_key?(%{"error" => %{"message" => message}}) when is_binary(message) do
+    String.contains?(message, "API key not valid")
+  end
+
+  defp invalid_key?(_body), do: false
 
   defp max_results(settings) do
     settings
