@@ -1,9 +1,13 @@
 defmodule SmmMonitor.Fetchers.ParsingTest do
   @moduledoc """
-  Each platform's `parse/1` maps its API payload onto mention attrs. These
-  are pure functions over saved payload shapes, so they're testable without
-  credentials or HTTP — including for the two platforms whose live fetch is
-  still stubbed.
+  Each platform's parse function maps its API payload onto mention attrs.
+  These are pure functions over saved payload shapes, so they are testable
+  without credentials or HTTP.
+
+  Per-platform fetch behaviour lives with each platform; this file is the
+  cross-platform view — every fetcher maps onto the same struct, and every
+  one of them falls back to fixtures rather than failing when its
+  credentials are absent.
   """
 
   use ExUnit.Case, async: true
@@ -113,7 +117,7 @@ defmodule SmmMonitor.Fetchers.ParsingTest do
     end
   end
 
-  describe "Twitter.parse/1 (stubbed platform)" do
+  describe "Twitter.parse/1" do
     test "resolves author usernames from the expansion" do
       payload = %{
         "data" => [
@@ -138,7 +142,7 @@ defmodule SmmMonitor.Fetchers.ParsingTest do
     end
   end
 
-  describe "Instagram.parse/1 (stubbed platform)" do
+  describe "Instagram.parse_media/1" do
     test "maps a /tags payload onto mention attrs" do
       payload = %{
         "data" => [
@@ -152,29 +156,39 @@ defmodule SmmMonitor.Fetchers.ParsingTest do
         ]
       }
 
-      assert [%{id: "instagram-ig1", author: "@studio"}] = Instagram.parse(payload)
+      assert [%{id: "instagram-ig1", author: "@studio"}] = Instagram.parse_media(payload)
     end
   end
 
-  describe "stubbed fetchers" do
-    test "report why they can't run live" do
-      # Deliberate: these need paid or reviewed API access. The worker sees
-      # ready?/1 == false and serves fixtures instead.
-      context = context_for(:twitter)
-
-      refute Twitter.ready?(context)
-      refute Instagram.ready?(context)
-      assert {:error, :requires_paid_api_access, nil} = Twitter.fetch(context, nil)
-
-      assert {:error, :requires_business_account_and_app_review, nil} =
-               Instagram.fetch(context, nil)
+  describe "every platform without credentials" do
+    test "declines to go live rather than failing a poll" do
+      # All four have live implementations now, so what separates live
+      # from fixtures is ready?/1 alone. The worker never calls fetch/2
+      # when this is false, which is why no fetcher here needs to defend
+      # itself against a missing token.
+      for {module, platform} <- [
+            {Reddit, :reddit},
+            {YouTube, :youtube},
+            {Twitter, :twitter},
+            {Instagram, :instagram}
+          ] do
+        refute module.ready?(context_for(platform, credentials: [])),
+               "#{platform} claimed to be ready with no credentials"
+      end
     end
 
-    test "still produce mock mentions" do
-      assert {:ok, mentions, nil} = Twitter.mock_fetch(context_for(:twitter), nil)
-      assert length(mentions) > 0
-      assert Enum.all?(mentions, &(&1.platform == :twitter))
-      assert Enum.all?(mentions, & &1.mock)
+    test "still produce mock mentions on every platform" do
+      for {module, platform} <- [
+            {Reddit, :reddit},
+            {YouTube, :youtube},
+            {Twitter, :twitter},
+            {Instagram, :instagram}
+          ] do
+        assert {:ok, mentions, nil} = module.mock_fetch(context_for(platform), nil)
+        assert length(mentions) > 0
+        assert Enum.all?(mentions, &(&1.platform == platform))
+        assert Enum.all?(mentions, & &1.mock)
+      end
     end
   end
 

@@ -52,8 +52,22 @@ config :smm_monitor, :platforms,
     interval_ms: :timer.minutes(5),
     opts: []
   ],
-  twitter: [module: SmmMonitor.Fetchers.Twitter, enabled: true, opts: []],
-  instagram: [module: SmmMonitor.Fetchers.Instagram, enabled: true, opts: []]
+  twitter: [
+    module: SmmMonitor.Fetchers.Twitter,
+    enabled: true,
+    # Slower than Reddit: recent search is bounded by a monthly post cap,
+    # so polling every 30s would spend a month's worth in days.
+    interval_ms: :timer.minutes(5),
+    opts: []
+  ],
+  instagram: [
+    module: SmmMonitor.Fetchers.Instagram,
+    enabled: true,
+    # Several requests per poll against Meta's hourly allowance, and the
+    # edges it reads move slowly. Every 15 minutes is plenty.
+    interval_ms: :timer.minutes(15),
+    opts: []
+  ]
 
 # Reddit is the one platform with a live implementation. Which subreddits
 # to watch is deployment-specific, so `SMM_REDDIT_SUBREDDITS` overrides

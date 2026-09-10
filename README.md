@@ -713,20 +713,20 @@ There are two switches. The per-platform one wins:
 | --- | --- |
 | *(nothing set)* | Everything mocked. This is the default. |
 | `SMM_MOCK_REDDIT=false` | Reddit live, everything else mocked. |
-| `SMM_MOCK_YOUTUBE=false` | YouTube live, everything else mocked. |
-| Both of the above | Reddit and YouTube live, Twitter and Instagram mocked. |
+| `SMM_MOCK_TWITTER=false` | Twitter/X live, everything else mocked. |
+| Several of the above | Exactly those platforms live, the rest mocked. |
 | `SMM_MOCK_REDDIT=true` | Reddit mocked, even with credentials set. |
-| `SMM_MOCK_MODE=false` | Global default flips to live. Twitter and Instagram have no live implementation, so they stay on fixtures regardless. |
+| `SMM_MOCK_MODE=false` | Global default flips to live. Any platform whose credentials are missing still serves fixtures. |
 
 A per-platform flag unset means *"inherit `SMM_MOCK_MODE`"*, not *"go
 live"* — so you can't accidentally start hitting an API by never setting
-it. The two live platforms are independent: turning YouTube on has no
-effect on Reddit and vice versa.
+it. All four platforms are independent: turning YouTube on has no effect
+on Reddit, Twitter or Instagram.
 
 **A platform without credentials keeps serving mock data** rather than
-failing. Set `SMM_MOCK_REDDIT=false` but forget the client secret (or
-`SMM_MOCK_YOUTUBE=false` with no API key) and you'll get fixtures plus one
-clear warning in the log:
+failing. Set `SMM_MOCK_REDDIT=false` but forget the client secret — or
+`SMM_MOCK_TWITTER=false` with no bearer token — and you'll get fixtures
+plus one clear warning in the log:
 
 ```
 [warning] reddit is configured for live data but its credentials are
@@ -861,6 +861,205 @@ quoted), ordered by date, published within the last 24 hours. The channel
 title becomes the mention's author, the video title and description become
 its text.
 
+### Getting an X (Twitter) API bearer token
+
+Recent search needs a **paid tier**. The free tier can post but cannot
+read search results, so there is no free path to this data — budget for
+it before wiring it up.
+
+1. Go to <https://developer.x.com/en/portal/dashboard> and sign in with
+   the account that will own the integration.
+2. Create a **Project** (not just an App). Recent search is a v2
+   endpoint, and v2 endpoints only work with keys attached to a Project —
+   a standalone App returns 403 no matter how valid its token is.
+3. Inside the Project, create an **App**.
+4. Subscribe the Project to a paid tier. Basic is the cheapest that
+   includes `/2/tweets/search/recent`.
+5. Open the App's **Keys and tokens** tab and generate a **Bearer
+   Token**. Copy it immediately — the portal shows it once, and
+   regenerating invalidates the old one.
+
+That token is the whole credential: app-only auth, no user context, no
+refresh flow, nothing to cache. Treat it like a password.
+
+```bash
+export TWITTER_BEARER_TOKEN='AAAAAAAAAAAAAAAAAAAAA...'
+export SMM_MOCK_TWITTER=false
+```
+
+### X's two limits, and why they're tracked differently
+
+X bounds recent search twice, and confusing the two is how an
+integration goes dark for three weeks:
+
+| Limit | Reported? | How it's handled |
+| --- | --- | --- |
+| **Requests per 15 minutes** | Yes — `x-rate-limit-*` headers | Read from every response; backs off before the window empties, waiting exactly until the reset |
+| **Posts per month** (the Project's post cap) | **No header at all** | Counted locally against a conservative budget, like YouTube's quota |
+
+The monthly cap is the one that ends a month early. Nothing in a
+response says how close it is, so `SMM_TWITTER_MONTHLY_POST_BUDGET`
+holds a self-imposed ceiling — **10,000 by default, deliberately low**.
+Set it to what your plan actually allows:
+
+```bash
+export SMM_TWITTER_MONTHLY_POST_BUDGET=50000
+# If your billing cycle doesn't start on the 1st:
+export SMM_TWITTER_BILLING_CYCLE_DAY=12
+```
+
+Standing down early costs coverage that this one variable fixes.
+Overrunning the cap costs the rest of the month, so the default errs the
+recoverable way. The real figure is at `GET /2/usage/tweets` in the
+developer portal — worth checking after the first week and setting the
+budget from what you see.
+
+Two things keep the spend down without any tuning: the query excludes
+retweets (500 retweets of one complaint would read as 500 complaints
+*and* cost 500 posts), and the counter charges for posts actually
+returned rather than the page size requested.
+
+### What X gets asked
+
+One `GET /2/tweets/search/recent` per poll, for the shared
+`SMM_KEYWORDS` terms OR-ed together with phrases quoted, minus retweets,
+over the last 7 days. Author handles come back through the `author_id`
+expansion. A tweet whose author is missing from that expansion — a
+deleted or protected account — still becomes a mention under `@unknown`,
+because the text is the point.
+
+Polling defaults to 5 minutes rather than 30 seconds, since the monthly
+cap rather than the 15-minute window is what this platform runs out of.
+`SMM_TWITTER_POLL_INTERVAL_MS` overrides it.
+
+### Getting Instagram Graph API access
+
+More setup than the others, because Meta scopes everything to an account
+you control:
+
+1. The Instagram account must be a **Business or Creator** account, not
+   personal. (Instagram app → Settings → Account type.)
+2. It must be **linked to a Facebook Page** you administer. (Page →
+   Settings → Linked accounts → Instagram.)
+3. Create an app at <https://developers.facebook.com/apps> — type
+   **Business** — and add the **Instagram Graph API** product to it.
+4. In **Graph API Explorer**, select your app, then generate a User
+   Access Token with these permissions: `instagram_basic`,
+   `instagram_manage_comments`, `pages_show_list` and
+   `pages_read_engagement`.
+5. **Exchange it for a long-lived token.** The token the Explorer gives
+   you expires in about an hour:
+
+   ```bash
+   curl -s "https://graph.facebook.com/v21.0/oauth/access_token\
+   ?grant_type=fb_exchange_token\
+   &client_id=<APP_ID>\
+   &client_secret=<APP_SECRET>\
+   &fb_exchange_token=<SHORT_LIVED_TOKEN>"
+   ```
+
+6. **Find the Instagram Business Account ID** — not the username, and
+   not the Facebook Page id:
+
+   ```bash
+   # The Page linked to the Instagram account:
+   curl -s "https://graph.facebook.com/v21.0/me/accounts?access_token=<TOKEN>"
+
+   # Then, with that Page's id:
+   curl -s "https://graph.facebook.com/v21.0/<PAGE_ID>\
+   ?fields=instagram_business_account&access_token=<TOKEN>"
+   ```
+
+   The `instagram_business_account.id` in that response — a 17-digit
+   number beginning `1784…` — is what goes in the env var.
+
+7. Going beyond your own test accounts needs **App Review** for those
+   permissions. In development mode the app works for accounts with a
+   role on it, which is enough to monitor your own brand.
+
+```bash
+export INSTAGRAM_ACCESS_TOKEN='EAAG...'
+export INSTAGRAM_BUSINESS_ACCOUNT_ID='17841400000000000'
+export SMM_MOCK_INSTAGRAM=false
+```
+
+⚠️ **Long-lived tokens expire after 60 days.** Refresh before then, or
+Instagram silently stops returning data. The fetcher detects this
+specific failure and logs `expired_access_token` rather than a generic
+400, because a 60-day clock that fails quietly is worth naming.
+
+### What Instagram monitoring can and cannot see
+
+**Read this before trusting the Instagram tab.**
+
+Reddit, YouTube and X all answer the question this tool exists to ask:
+*who mentioned this brand anywhere on the platform?* **Instagram does
+not.** There is no endpoint in the Graph API — at any tier, for any
+amount of money — that takes a keyword and returns public posts
+containing it. Instagram removed that capability years ago and has not
+replaced it.
+
+So Instagram monitoring here is **not** brand-wide search. It is three
+narrow, account-scoped views, and you choose which ones to poll:
+
+| Source | What it sees | Limits |
+| --- | --- | --- |
+| `tags` *(default)* | Posts by other people that **@-tag your account** in the media | Only posts where they actually tagged you |
+| `comments` *(default)* | Comments on **your own** posts | Your posts only; bounded by `:media_limit` |
+| `hashtag` *(opt-in)* | Public posts carrying a **tracked hashtag** | 30 unique hashtags per rolling 7 days; last 24 hours only; **no author** |
+
+What **none** of them sees:
+
+- **Someone writing "realoffice is broken" in a caption without tagging
+  you.** Meta delivers @-mentions in other people's captions and
+  comments *only by webhook* — a push to a public HTTPS endpoint. There
+  is no pull equivalent, so a polling tool on a private box cannot
+  retrieve them. Not implemented here, and not implementable without a
+  public callback URL.
+- **Stories, Reels-only mentions, or private accounts.** Out of scope
+  for these edges.
+- **Who posted a hashtag result.** Meta strips usernames from hashtag
+  search — no personally identifying information is returned — so those
+  mentions are attributed to `#realoffice` rather than to a person. That
+  is honest; `@unknown` would imply we looked and failed.
+
+Practically: **Instagram will under-report** compared to the other three
+platforms, and a quiet Instagram tab means "nobody tagged us", not
+"nobody mentioned us". If Instagram coverage is commercially important,
+the honest options are Meta's webhooks (a public endpoint plus App
+Review) or a third-party listening vendor with its own crawl — not a
+setting in this app.
+
+Turn the hashtag source on if you want the widest coverage the API
+allows:
+
+```bash
+export SMM_INSTAGRAM_SOURCES=tags,comments,hashtag
+export SMM_INSTAGRAM_HASHTAGS=realoffice,realofficeapp
+```
+
+Keep that hashtag list **short and stable**: Meta counts 30 *unique*
+hashtags per rolling 7 days per account, and editing the list churns
+through that budget. Hashtag ids are cached in the worker between polls,
+since they never change.
+
+### What Instagram gets asked
+
+Per poll, one request per enabled source: `/{account-id}/tags`,
+`/{account-id}/media` with the comments nested via field expansion (one
+request, not one per post), and for hashtags an `ig_hashtag_search`
+lookup — cached after the first — plus one `recent_media` call per tag.
+
+Meta reports rate limiting as a **percentage of an opaque hourly
+allowance** in `x-business-use-case-usage`, not as a count of requests
+left. The fetcher backs off at 90%, because the percentage arrives on
+the response *after* the call that caused it.
+
+Each source runs independently. Meta's permissions are granular, and a
+token that reads tags often cannot read comments — so one source failing
+is logged and the others still return mentions. Only a poll where every
+source failed counts as an error.
+
 ### Environment variables
 
 | Variable | Used by |
@@ -868,6 +1067,8 @@ its text.
 | `SMM_MOCK_MODE` | Global switch; `true` (default) forces fixtures everywhere |
 | `SMM_MOCK_REDDIT` | Per-platform override for Reddit. Unset inherits the global. |
 | `SMM_MOCK_YOUTUBE` | Per-platform override for YouTube. Unset inherits the global. |
+| `SMM_MOCK_TWITTER` | Per-platform override for Twitter/X. Unset inherits the global. |
+| `SMM_MOCK_INSTAGRAM` | Per-platform override for Instagram. Unset inherits the global. |
 | `SMM_KEYWORDS` | Comma-separated brand terms — the *default* before anything is saved from the config screen |
 | `SMM_CONFIG_FILE` | Where runtime-editable settings are saved |
 | `SMM_SSH_ENABLED` | Serve the dashboard over SSH (default false) |
@@ -884,32 +1085,40 @@ its text.
 | `SMM_YOUTUBE_POLL_INTERVAL_MS` | YouTube's own poll interval (default 300000 = 5 min) |
 | `SMM_YOUTUBE_DAILY_QUOTA_BUDGET` | Units to spend per day before standing down (default 8000) |
 | `YOUTUBE_API_KEY` | YouTube **(live)** |
-| `TWITTER_BEARER_TOKEN` | Twitter/X (stubbed) |
-| `INSTAGRAM_ACCESS_TOKEN` / `INSTAGRAM_USER_ID` | Instagram (stubbed) |
+| `TWITTER_BEARER_TOKEN` | Twitter/X **(live)** |
+| `SMM_TWITTER_MONTHLY_POST_BUDGET` | Posts to spend per cycle before standing down (default 10000) |
+| `SMM_TWITTER_BILLING_CYCLE_DAY` | Day of month the post cap resets (default 1) |
+| `SMM_TWITTER_POLL_INTERVAL_MS` | Twitter's own poll interval (default 300000 = 5 min) |
+| `INSTAGRAM_ACCESS_TOKEN` | Instagram **(live)** |
+| `INSTAGRAM_BUSINESS_ACCOUNT_ID` | The 17-digit IG Business account id (`INSTAGRAM_USER_ID` also accepted) |
+| `SMM_INSTAGRAM_SOURCES` | Which sources to poll: `tags,comments,hashtag` (default `tags,comments`) |
+| `SMM_INSTAGRAM_HASHTAGS` | Hashtags to search if `hashtag` is enabled (default: the brand keywords) |
+| `SMM_INSTAGRAM_POLL_INTERVAL_MS` | Instagram's own poll interval (default 900000 = 15 min) |
 
-## What's real and what's stubbed
+## What each platform actually gives you
 
-| Platform | Status |
-| --- | --- |
-| **Reddit** | **Live.** OAuth2 script app, `client_credentials` grant, multireddit `/search` sorted by new. Token cached in the worker and refreshed before expiry; rate limit tracked from Reddit's own headers. Free tier. |
-| **YouTube** | **Live.** Data API v3 `search.list` with an API key. Quota tracked against a daily budget in the worker, standing the platform down when spent. Polls on its own slower interval. Free tier. |
-| **Twitter/X** | **Stubbed.** Recent search needs a paid Basic tier; there's no free read tier to develop against. The payload mapping (`Twitter.parse/1`) is written and tested; only the HTTP call is missing. |
-| **Instagram** | **Stubbed.** Needs a Business/Creator account, a linked Facebook Page and app review — and the Graph API only surfaces mentions *of your own account*, not arbitrary brand terms. Mapping written and tested. |
+All four platforms run on live APIs, with mock data as a fallback rather
+than a default state. What differs is **how much of the platform each
+one can see**, which matters more than whether the code is written:
 
-Both stubs list the exact remaining steps in their moduledocs. Because
-every non-Reddit platform is fixture-backed, their tabs, counts and
-sentiment bars all work today — the dashboard looks and behaves the same
-whether or not you have any credentials.
+| Platform | Coverage | How it works |
+| --- | --- | --- |
+| **Reddit** | **Platform-wide search.** Any post matching the brand terms. | OAuth2 script app, `client_credentials` grant, multireddit `/search` sorted by new. Token cached and refreshed before expiry; rate limit read from Reddit's headers. Free tier. |
+| **YouTube** | **Platform-wide search** of video titles and descriptions. Comments are not searched — see below. | Data API v3 `search.list` with an API key. Daily quota tracked against a budget; stands down when spent. Free tier. |
+| **Twitter/X** | **Platform-wide search**, last 7 days, retweets excluded. | v2 `/2/tweets/search/recent` with an app-only bearer token. Two limits tracked separately: the 15-minute window from headers, the monthly post cap locally. **Paid tier required.** |
+| **Instagram** | **Not brand-wide.** Only posts that tag your account, comments on your own posts, and (opt-in) public posts carrying a tracked hashtag. | Graph API, scoped to one Business account. The Graph API has no keyword search at any tier — see [What Instagram monitoring can and cannot see](#what-instagram-monitoring-can-and-cannot-see). |
 
-**Sentiment is keyword-based**, not ML: positive and negative word lists,
-with handling for negations ("not great") and intensifiers ("very good").
-It's good enough to make the bar useful and cheap enough to run on every
-mention at write time. `Sentiment.analyze/1` is the seam to swap in
-something real — text in, `{sentiment, score}` out.
+Every platform independently falls back to fixtures when its credentials
+are missing, and says so in the log. So a half-configured install shows
+real Reddit data next to fixture Instagram data rather than an empty
+dashboard or a crash — and `SMM_MOCK_MODE=true` (the default) serves
+fixtures everywhere, which is what makes the app runnable with no
+credentials at all.
 
-**Storage is ETS only.** Nothing is persisted; restarting starts from an
-empty table. Mentions are pruned by both age (`:retention_ms`) and row
-count (`:max_mentions`).
+**Coverage is uneven, on purpose.** Reddit, YouTube and X answer "who
+mentioned us anywhere?"; Instagram answers "who tagged us, and what did
+people say on our own posts?". A quiet Instagram tab does not mean
+nobody is talking about the brand there.
 
 ## Architecture
 
@@ -1136,6 +1345,8 @@ Compile-time defaults live in `config/config.exs`:
 | `:ssh_port` | `2222` | Port the SSH server listens on |
 | `:start_persistence` | `true` | Whether the tree starts the repo and migrator |
 | `:persist_writes` | `true` | Whether mentions are written to disk |
+| `SmmMonitor.Fetchers.Twitter` | see above | Page size, monthly post budget, billing cycle day |
+| `SmmMonitor.Fetchers.Instagram` | see above | Which sources to poll, hashtags, page sizes |
 | `:platforms` | four entries | Platform → module, enabled flag, opts |
 
 Reddit has its own block, since these are deployment choices rather than
@@ -1191,8 +1402,23 @@ runtime. Both live platforms search for the *same* brand terms.
   hours. Set `SMM_YOUTUBE_POLL_INTERVAL_MS=1080000` for all-day coverage.
 * YouTube quota accounting is our own estimate — Google doesn't report
   remaining quota — so it can't see another process sharing the key.
-* Twitter and Instagram are still fixture-backed; both need paid or
-  reviewed API access.
+* **Instagram cannot do brand-wide search.** It sees posts that tag your
+  account, comments on your own posts, and (opt-in) public posts
+  carrying a tracked hashtag — nothing else. @-mentions in other
+  people's captions are webhook-only and out of reach for a polling
+  tool. See the Instagram section above; this is a platform limit, not
+  a to-do.
+* Instagram hashtag results carry **no author** — Meta strips usernames
+  — so they show as `#brandname` rather than a person.
+* Instagram hashtag search allows **30 unique hashtags per rolling 7
+  days** and only returns the last 24 hours of media.
+* Instagram long-lived tokens expire after **60 days** and there is no
+  automatic refresh; the fetcher names the failure but cannot fix it.
+* X recent search needs a **paid tier** and only reaches back 7 days.
+* The X monthly post cap isn't reported in any response header, so the
+  count here is our own estimate against a conservative budget — it
+  can't see other apps sharing the Project. Check `GET /2/usage/tweets`
+  for the real figure.
 * SSH access has no rate limiting or audit trail beyond one log line per
   connection — run it behind a VPN or firewall rather than exposed.
 * Remote sessions are read-only; there's no per-user permission model,
