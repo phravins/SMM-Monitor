@@ -4,6 +4,9 @@ import Config
 config :smm_monitor,
   # Never let a test write over the real runtime config file.
   config_file: "tmp/test_runtime_config.json",
+  # Alerting is exercised by driving the GenServer directly, not on a
+  # timer racing assertions.
+  alerts_enabled: false,
   # Boot-loading history would fight tests that assert on an empty store.
   load_history_on_boot: false,
   # The repo still runs, so tests have a database; the writer and the

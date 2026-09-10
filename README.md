@@ -184,6 +184,106 @@ one.
 Credentials are deliberately not editable from the screen: they belong in
 the environment, not in a file the dashboard writes.
 
+## Alerting on negative spikes
+
+Collecting mentions only helps if someone notices when they turn. Every
+minute, each platform's recent negative mentions are compared against
+*that platform's own normal*, drawn from stored history, and an alert is
+raised when the two diverge far enough.
+
+When one fires, it appears as a banner across the top of the dashboard —
+amber for a warning, red for critical:
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  !! NEGATIVE SPIKE  reddit: 27 negative mentions in the last 1h              │
+│                     (normally about 1.2) — 23.0x above baseline             │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+...and goes to every configured channel: the log always, and a webhook if
+you've set one up.
+
+### Why a baseline, not a threshold
+
+"Alert at 10 negative mentions an hour" is wrong for every client at
+once. One with five mentions a day would never trip it; one with five
+thousand would trip it permanently. So the comparison is always against
+what that platform normally does.
+
+A spike has to clear **three** guards, and each stops a specific kind of
+false alarm:
+
+| Guard | Default | Stops |
+| --- | --- | --- |
+| **Ratio** | 3x baseline | The actual signal — a normal busy afternoon isn't an emergency |
+| **Floor** | 5 mentions | Going from 0.2 to 2 negatives is an "infinite spike". You should not be woken for two grumpy posts. |
+| **Warm-up** | 24h of history | You can't detect an anomaly without a normal. Without this, every fresh install's first hour looks like a crisis. |
+
+Above 6x it's **critical** rather than a warning.
+
+### Slack (or any webhook)
+
+```sh
+SMM_ALERT_WEBHOOK_URL=https://hooks.slack.com/services/T00/B00/xxxx
+```
+
+The payload carries a `text` field that Slack, Discord and most chat
+webhooks render directly, plus the raw numbers for anything generic:
+
+```json
+{
+  "text": ":rotating_light: reddit: 27 negative mentions in the last 1h ...",
+  "severity": "critical",
+  "platform": "reddit",
+  "observed_negative": 27,
+  "observed_total": 41,
+  "baseline_negative": 1.2,
+  "ratio": 23.0,
+  "at": "2026-09-10T09:53:28Z"
+}
+```
+
+Leave it unset and alerts go to the log only — an unconfigured webhook is
+the normal state, not an error.
+
+### You will not be spammed
+
+A spike outlasts one evaluation, so without a cooldown a single bad
+afternoon would post to Slack sixty times an hour. Each platform is
+limited to **one alert an hour** (`SMM_ALERT_COOLDOWN_MS`).
+
+The cooldown clears as soon as that platform drops back below threshold,
+so a genuinely new spike after a recovery alerts immediately rather than
+waiting out the remainder of an old one.
+
+### Tuning
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SMM_ALERTS_ENABLED` | `true` | Whether alerting runs at all |
+| `SMM_ALERT_WINDOW_MS` | 1h | The window compared against the baseline |
+| `SMM_ALERT_BASELINE_DAYS` | `7` | How much history the baseline is drawn from |
+| `SMM_ALERT_RATIO` | `3.0` | Multiple of baseline that counts as a spike |
+| `SMM_ALERT_FLOOR` | `5` | Minimum negatives before anything can fire |
+| `SMM_ALERT_WARMUP_MS` | 24h | History needed before alerting starts |
+| `SMM_ALERT_CRITICAL_RATIO` | `6.0` | Multiple that counts as critical |
+| `SMM_ALERT_COOLDOWN_MS` | 1h | Minimum gap between alerts for one platform |
+| `SMM_ALERT_WEBHOOK_URL` | — | Where to POST alerts, if anywhere |
+
+> **A note on accuracy.** Alerts are only as good as the sentiment
+> scoring behind them, which is still a keyword list. It will miss
+> sarcasm and phrasings that aren't in the word lists — "the site is
+> down", for instance, currently scores neutral. Treat an alert as "go
+> and look", not as a measurement.
+
+### Failure policy
+
+Alerting is the last thing that should be allowed to break collection.
+A failing notifier is logged and the others still run; a database that
+can't answer means no baseline, which reads as "still warming up" rather
+than as a reason to alert.
+
 ## Remote access over SSH
 
 Anyone on the team can view the live dashboard from their own terminal,
@@ -677,6 +777,7 @@ SmmMonitor.Supervisor                    (one_for_one)
 ├── SmmMonitor.Persistence.Writer        off-critical-path writes
 ├── SmmMonitor.Persistence.Retention     daily prune
 ├── SmmMonitor.Processing.Processor      ETS owner, scoring, aggregation
+├── SmmMonitor.Alerts                    negative-sentiment spike detection
 ├── SmmMonitor.SSH.Server                remote dashboard, when enabled
 ├── SmmMonitor.Fetchers.Supervisor       (one_for_one)
 │   ├── PlatformSupervisor(:reddit)    → Worker(:reddit)
@@ -720,6 +821,13 @@ one `insert_all`, so batching comes for free without a flush timer. The
 supervisor waits for each child's `start_link` to return, guaranteeing
 the table exists before the processor queries it. A `Task` would return
 as soon as it was spawned.
+
+**Alerts.** `Alerts.Detector` holds the judgement and is pure — numbers
+in, verdict out — so every threshold decision is testable without waiting
+for a real spike. The `Alerts` GenServer holds the clock, the cooldowns
+and the notifier fan-out. The current window is read from ETS (cheap, and
+an hour is well inside its retention); the baseline comes from SQLite,
+because that is the only place that knows what a week looks like.
 
 **SSH.** `Garnish` serves the same dashboard to remote terminals, one
 channel process per session. Garnish is a fork of Ratatouille adapted for
@@ -873,6 +981,9 @@ Compile-time defaults live in `config/config.exs`:
 | `:config_file` | per-user path | Where runtime-editable settings are saved |
 | `:db_retention_days` | `30` | How long mentions are kept on disk |
 | `:history_limit` | `200` | Mentions per platform restored on boot |
+| `:alerts_enabled` | `true` | Whether spike detection runs |
+| `:alerts` | see above | Ratio, floor, warm-up and critical thresholds |
+| `:alert_notifiers` | log + webhook | Channels an alert is sent to |
 | `:ssh_enabled` | `false` | Whether the SSH server starts |
 | `:ssh_port` | `2222` | Port the SSH server listens on |
 | `:start_persistence` | `true` | Whether the tree starts the repo and migrator |
@@ -920,8 +1031,6 @@ runtime. Both live platforms search for the *same* brand terms.
 * Credentials are global, not per-client. Monitoring several brands with
   separate API accounts needs per-client state — worth designing before
   wiring up Instagram for more than one brand.
-* No alerting. A spike in negative sentiment shows on the bar but doesn't
-  notify anyone.
 * Reddit search returns *posts*, not comments. A brand discussed only in
   the comments of someone else's thread won't show up.
 * Reddit's search index lags a little behind new posts, so a mention can
@@ -940,3 +1049,7 @@ runtime. Both live platforms search for the *same* brand terms.
   connection — run it behind a VPN or firewall rather than exposed.
 * Remote sessions are read-only; there's no per-user permission model,
   only "host terminal" versus "everyone else".
+* Alerts fire on negative-sentiment spikes only — not on volume spikes,
+  keyword matches, or a named competitor appearing.
+* Alerts live in memory, so a restart forgets recent ones and clears any
+  cooldown in force.

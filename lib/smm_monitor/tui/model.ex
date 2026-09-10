@@ -13,6 +13,7 @@ defmodule SmmMonitor.TUI.Model do
   It is also why the dashboard's logic is testable without a terminal.
   """
 
+  alias SmmMonitor.Alerts
   alias SmmMonitor.Config
   alias SmmMonitor.Monitor
 
@@ -29,6 +30,8 @@ defmodule SmmMonitor.TUI.Model do
             editing: nil,
             buffer: "",
             flash: nil,
+            # Alerts raised recently, newest first. Shown as a banner.
+            alerts: [],
             # Set when the user asks to quit; the app acts on it.
             quit: false,
             # True for sessions that may view but not change config. Set
@@ -103,6 +106,7 @@ defmodule SmmMonitor.TUI.Model do
         stats: Monitor.stats(reading_tab),
         breakdown: Monitor.breakdown(),
         statuses: statuses(),
+        alerts: read_alerts(),
         config: read_config(),
         config_source: config_source(),
         config_path: config_path(),
@@ -360,6 +364,29 @@ defmodule SmmMonitor.TUI.Model do
     do: "at least one brand term is needed — nothing would be monitored"
 
   defp error_message(field, reason), do: "could not save #{label(field)}: #{inspect(reason)}"
+
+  @doc """
+  The alert to show in the banner, or `nil` when all is quiet.
+
+  Only alerts still inside their window are shown: a spike from this
+  morning shouldn't sit at the top of the screen all afternoon.
+  """
+  @spec active_alert(t()) :: SmmMonitor.Alerts.Alert.t() | nil
+  def active_alert(%__MODULE__{alerts: []}), do: nil
+
+  def active_alert(%__MODULE__{alerts: [latest | _rest], updated_at: now}) do
+    if fresh?(latest, now || DateTime.utc_now()), do: latest, else: nil
+  end
+
+  defp fresh?(alert, now), do: DateTime.diff(now, alert.at, :millisecond) < alert.window_ms
+
+  # Alerting may be switched off, in which case there is simply nothing
+  # to show rather than an error to handle.
+  defp read_alerts do
+    Alerts.recent(SmmMonitor.Alerts, 10)
+  catch
+    :exit, _reason -> []
+  end
 
   # The config screen reads through the same public API as everything else.
   # A Config process that isn't running (a test rendering the model in
