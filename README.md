@@ -89,104 +89,231 @@ directory and works.
 
 | Key | Action |
 | --- | --- |
-| `a` | All platforms |
+| `]` / `[` | **Next / previous client** |
+| `1`–`9` | Jump straight to that client |
+| `a` | All platforms (for the selected client) |
 | `t` `i` `r` `y` | Twitter · Instagram · Reddit · YouTube |
-| `c` | Config screen (see below) |
+| `c` | Clients screen (see below) |
 | `j` / `k`, `↑` / `↓` | Scroll the mentions table |
 | `PgUp` / `PgDn` | Scroll a screen at a time |
 | `g` / `Home` | Jump to the newest mention |
 | `q` | Quit (or `Ctrl-C`) |
 
-On the config screen, `j`/`k` move between fields, `e` or `Enter` starts
-editing, `Enter` saves and `Esc` cancels. **While you're editing a field
-every key is typed**, including `q` and the tab letters — so a brand term
-like "quality" or "clarity" goes in fine. `Ctrl-C` always quits.
+On the clients screen, `j`/`k` move between clients, `h`/`l` between a
+client's fields, `e` or `Enter` starts editing, `+` adds a client, `d`
+removes one (twice — it asks first), `p` pauses one, and `s` switches the
+dashboard to it. **While you're editing every key is typed**, including
+`q` and the tab letters — so a brand term like "quality" or "clarity"
+goes in fine. `Ctrl-C` always quits.
 
-## Changing what's tracked, without a restart
+## Monitoring several clients
 
-Press `c` for the config screen:
+The unit of monitoring is a **client**, not a keyword — RealOffice runs
+social media for several businesses, and each needs its own brand terms,
+its own subreddits and its own view.
+
+Every mention belongs to exactly one client. The dashboard always shows
+one client at a time, and `]` / `[` cycle between them:
 
 ```
-┌─config · edit and fetchers pick it up next poll──────────────────────────────┐
+ SMM MONITOR · Acme Corp 2/4 [[/]] · acme, acme corp · LIVE · updated 14:22:07
+```
+
+The client's name comes first because with four on one dashboard,
+"whose numbers am I looking at?" is the question that has to be answered
+before any other. **The "all" tab means all of this client's platforms**
+— never every client's mentions added together, which would be a number
+nobody could act on.
+
+### Adding a client
+
+1. Press **`c`** for the clients screen.
+2. Press **`+`**. Type the client's name — "Acme Corp" — and press
+   **Enter**. The name doubles as its first brand term, so it starts
+   searching immediately.
+3. The new client is highlighted with its **brand terms** selected. Press
+   **`e`**, type the terms you actually want (comma-separated:
+   `acme, acme corp, acmecorp`) and press **Enter**.
+4. Press **`l`** to move to **subreddits**, then **`e`** to edit them —
+   comma-separated, or leave empty to search all of Reddit.
+5. Press **`s`** to switch the dashboard to the new client.
+
+That's it. **No restart**: every platform picks the new client up on its
+next poll — 30s for Reddit, 5 minutes for YouTube and Twitter, 15 for
+Instagram.
+
+```
+┌─clients · changes are picked up on the next poll─────────────────────────────┐
 │                                                                              │
-│  › brand terms   realoffice, real office                                     │
-│    subreddits    smallbusiness, marketing, socialmedia, Entrepreneur         │
+│  CLIENTS   3 configured                                                      │
 │                                                                              │
-│  PLATFORM MODE                                                               │
-│    reddit        live                                                        │
-│    youtube       mock                                                        │
-│    twitter       mock                                                        │
-│    instagram     mock                                                        │
+│    1. Real office  (unassigned)  ● viewing                                   │
+│        name         Real office                                              │
+│        brand terms  realoffice, real office                                  │
+│        subreddits   smallbusiness, marketing                                 │
+│  ▸ 2. Acme Corp  (acme-corp)                                                 │
+│        name         Acme Corp                                                │
+│      › brand terms  acme, acme corp                                          │
+│        subreddits   saas, startups                                           │
+│    3. Beta Labs  (beta-labs)  ‖ paused — not polled                          │
+│        name         Beta Labs                                                │
+│        brand terms  betalabs                                                 │
+│        subreddits   (none — searching all of Reddit)                         │
 │                                                                              │
-│  mock/live is set by environment variables and needs a restart               │
-│                                                                              │
-│  ✓ brand terms saved — fetchers pick this up on their next poll              │
+│  j/k client · h/l field · e edit · + add · d remove · p pause · s view       │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Two fields are editable, and a change takes effect on each platform's
-**next poll** — no restart. Reddit polls every 30s, YouTube every 5
-minutes by default, so give it a moment.
-
 | Field | What it does |
 | --- | --- |
-| **brand terms** | The search terms, shared by every platform. Comma-separated; multi-word terms are quoted as phrases automatically. At least one is required. |
-| **subreddits** | Which subreddits Reddit watches. Comma-separated. Leave it empty to search all of Reddit. |
+| **name** | What you see in the header. Renaming keeps the client's id, so its history is untouched. |
+| **brand terms** | The search terms for this client, used by every platform. Comma-separated; multi-word terms are quoted as phrases automatically. At least one is required. |
+| **subreddits** | Which subreddits Reddit watches **for this client**. Comma-separated. Empty means all of Reddit. |
 
-The platform mode rows are **read-only**. Mock/live and credentials are
-environment-controlled and still need a restart — see the table at the end
-of this section.
+### Pausing vs. removing
 
-### Where it's saved
+**`p` pauses** a client: it stops being polled for, and keeps every
+mention already collected. That's the one to use for a contract on hold.
 
-`~/.config/smm_monitor/config.json` (honouring `XDG_CONFIG_HOME`), or
-wherever `SMM_CONFIG_FILE` points. It holds only the two editable fields:
+**`d` removes** it — and takes its mentions with it. It asks first, and a
+second `d` confirms. Deleting is deliberately total: a client row with no
+mentions, or mentions with no client, are both states nothing else in the
+app knows how to render.
 
-```json
-{
-  "version": 1,
-  "keywords": ["realoffice", "real office"],
-  "subreddits": ["marketing", "smallbusiness"],
-  "updated_at": "2026-09-10T09:15:00Z"
-}
-```
+### Clients on separate SSH sessions
 
-**No credentials are in it**, so it's safe to read, diff and hand to
-someone. The screen shows the path it's writing to.
+**Which client you're viewing is per session.** Two people connected over
+SSH can watch different clients at the same time without fighting over a
+shared selection. What *is* shared is the client list itself: if someone
+adds a client, everyone's next refresh sees it.
 
-Not under `priv/`, which is the obvious-looking choice: `:code.priv_dir/1`
-resolves to the *build* copy (`_build/dev/lib/smm_monitor/priv/`), not the
-source tree, so settings saved there are a build artifact — `mix clean`
-would discard them, and a release replaces its `priv` directory wholesale
-on upgrade. Your saved brand terms should outlive a rebuild.
+### Where clients are stored
 
-### If the file is missing or broken
+In SQLite, in a `clients` table alongside the mentions — not in the old
+JSON config file. Mentions reference a client, and keeping the two in
+separate stores would let a client vanish while its mentions still
+pointed at it.
 
-Neither stops the app booting.
+The id is a slug of the name (`Acme Corp` → `acme-corp`) rather than a
+number, because it is written onto every mention row and read in log
+lines. **Ids never change on rename**, which is what makes a rename safe.
+Two clients with the same name get `acme` and `acme-2` — two clients
+called Acme is your business, not something for the tool to refuse.
 
-| Situation | What happens |
-| --- | --- |
-| **Missing** | Normal — it's the state before anyone has changed anything. The env-var/compile-time defaults are used, and the file appears on the first save. |
-| **Corrupt** (bad JSON, or valid JSON of the wrong shape) | Logged, moved aside to `config.json.corrupt` so you can inspect it, and the defaults are used. The config screen says the previous file was unreadable rather than hiding it. |
-| **One bad field** | That field falls back to its default; the others are still read. A malformed `subreddits` doesn't cost you your `keywords`. |
-| **Unwritable** (read-only disk) | The change still applies in memory for this run — losing your edit because the disk objected would be worse — and a warning is logged. |
+### Upgrading from the single-keyword version
 
-Writes are atomic (written to a temp file, then renamed), so an
-interrupted write leaves the previous file intact rather than a truncated
-one.
+Nothing is lost, and there is nothing to do. On the first boot after this
+update:
+
+1. The **migration** adds `client_id` to every stored mention and assigns
+   existing rows to a holding client, `unassigned`. It prints how many it
+   moved. It can't do better than one holding client: nothing in a
+   mention row records which brand it was collected for, so guessing
+   would be worse than admitting it.
+2. **`SmmMonitor.Clients` seeds that client** from your previous
+   settings — the `~/.config/smm_monitor/config.json` file first, falling
+   back to `SMM_KEYWORDS` — and names it from the brand term. So
+   `["realoffice", "real office"]` becomes a client called *Real office*,
+   already searching for both, and every mention collected before the
+   upgrade belongs to it.
+3. The old config file is **left on disk untouched** and never written to
+   again, so rolling back to the previous release is a downgrade rather
+   than a restore from backup.
+
+The upshot: an install that was watching one brand keeps watching it,
+under a name, with its history intact. Add your second client whenever
+you're ready.
 
 ### What needs a restart
 
 | Setting | Changed how |
 | --- | --- |
-| Brand terms | **Config screen, live** |
-| Reddit subreddits | **Config screen, live** |
+| Clients: add, remove, pause | **Clients screen, live** |
+| Brand terms, subreddits, name | **Clients screen, live** |
 | Mock/live per platform (`SMM_MOCK_*`) | Env var + restart |
-| API credentials (`REDDIT_*`, `YOUTUBE_API_KEY`) | Env var + restart |
+| API credentials (`REDDIT_*`, `YOUTUBE_API_KEY`, …) | Env var + restart |
 | Poll intervals, quota budget, window/retention | Env var + restart |
 
 Credentials are deliberately not editable from the screen: they belong in
-the environment, not in a file the dashboard writes.
+the environment, not in a table the dashboard writes.
+
+⚠️ **Credentials are per install, not per client.** Every client is
+searched using the same Reddit app, YouTube key and X bearer token —
+which is what the next section is about.
+
+## How API limits are shared between clients
+
+This is the part worth understanding before adding your fifth client.
+
+**An API budget belongs to the credential, not to the client.** YouTube's
+10,000 daily quota units and X's monthly post cap are spent by whoever
+holds the key, and every client is searched with the same key. So the
+budget is shared, and it does not grow when you add a client — **it
+divides**.
+
+| Platform | The binding limit | Effect of N clients |
+| --- | --- | --- |
+| **YouTube** | 8,000 units/day (100 per search) | 80 searches/day total, split across clients |
+| **Twitter/X** | Monthly post cap (10,000 by default) | Shared; each client's results count against it |
+| **Reddit** | 60 requests/minute | Rarely binding — one request per client per poll |
+| **Instagram** | Meta's hourly allowance | Scoped per account, so effectively per client |
+
+That's why all of a platform's clients are polled from **one worker**,
+looping over them, rather than a worker each: one process has to own the
+counting. A worker per client would give each its own private idea of the
+quota, and four clients would quietly spend four times the budget and get
+the key cut off.
+
+### Can one client starve another?
+
+**Yes, in principle — and that's mitigated rather than ignored.**
+
+If the same client were polled first every cycle, it would spend the
+shared quota and the others would get whatever was left, which on a tight
+YouTube budget is nothing. So the client list is **rotated by poll
+count**: whoever went first this cycle goes last next time.
+
+When a fetcher reports a spent quota or a rate limit, the cycle **stops
+there** rather than working through the remaining clients — the limit is
+shared, so those calls would fail anyway — and the rotation puts the
+skipped clients first next time. The worker records this as coverage:
+
+```
+youtube: stopping this cycle at beta-labs ({:quota_exhausted, 42600000}) - the
+limit is shared across clients, so 2 client(s) are skipped and go first next cycle
+```
+
+The result is that a quota shortfall is spread evenly instead of falling
+on the same client every day. **Everyone loses the same fraction of
+coverage**, rather than one client losing all of it.
+
+### Making the budget go further
+
+If you are monitoring several clients on YouTube in particular, do the
+arithmetic before you rely on it: **80 searches a day ÷ N clients** is how
+many polls each client gets.
+
+| Clients | Polls per client per day | Sensible interval |
+| --- | --- | --- |
+| 1 | 80 | 18 min |
+| 3 | 26 | 55 min |
+| 5 | 16 | 90 min |
+| 10 | 8 | 3 hours |
+
+```bash
+# Five clients on YouTube: poll every 90 minutes, not every 5.
+export SMM_YOUTUBE_POLL_INTERVAL_MS=5400000
+```
+
+The startup warning tells you when your interval can't be sustained, and
+the platform stands down cleanly when the budget is spent rather than
+failing every call. Twitter's monthly cap has the same shape — raise
+`SMM_TWITTER_MONTHLY_POST_BUDGET` to what your plan actually allows, and
+remember it is divided between clients.
+
+**Paused clients cost nothing.** Pausing (`p`) is the cheapest way to get
+a struggling budget back: a paused client isn't polled and isn't counted
+in the rotation.
 
 ## How sentiment is scored
 
@@ -332,16 +459,23 @@ to neutral rather than leaving it as praise.
 ## Alerting on negative spikes
 
 Collecting mentions only helps if someone notices when they turn. Every
-minute, each platform's recent negative mentions are compared against
-*that platform's own normal*, drawn from stored history, and an alert is
-raised when the two diverge far enough.
+minute, **each client's** recent negative mentions on each platform are
+compared against *that client's own normal* for that platform, drawn from
+stored history, and an alert is raised when the two diverge far enough.
+
+Per client, not per platform alone: one client having a bad afternoon
+averaged against four quiet ones is a number nobody can act on, and the
+first thing anyone asks about an alert is whose brand it concerns. So
+alerts carry the client, cooldowns are keyed per client and platform —
+one client's spike never silences another's — and the dashboard shows
+only the selected client's alerts.
 
 When one fires, it appears as a banner across the top of the dashboard —
 amber for a warning, red for critical:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  !! NEGATIVE SPIKE  reddit: 27 negative mentions in the last 1h              │
+│  !! NEGATIVE SPIKE  Acme Corp / reddit: 27 negative mentions in the last 1h  │
 │                     (normally about 1.2) — 23.0x above baseline             │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -515,7 +649,7 @@ nothing else. There is no way to get a command prompt through this port.
 Password authentication is never offered; a public key is the only way
 in.
 
-**What a viewer can see:** every mention collected, the brand terms and
+**What a viewer can see:** every client, every mention collected, the brand terms and
 subreddits being tracked, and each platform's mock/live mode. **What they
 cannot see:** any API credential — those live in the environment and are
 never rendered.
@@ -1069,8 +1203,8 @@ source failed counts as an error.
 | `SMM_MOCK_YOUTUBE` | Per-platform override for YouTube. Unset inherits the global. |
 | `SMM_MOCK_TWITTER` | Per-platform override for Twitter/X. Unset inherits the global. |
 | `SMM_MOCK_INSTAGRAM` | Per-platform override for Instagram. Unset inherits the global. |
-| `SMM_KEYWORDS` | Comma-separated brand terms — the *default* before anything is saved from the config screen |
-| `SMM_CONFIG_FILE` | Where runtime-editable settings are saved |
+| `SMM_KEYWORDS` | Comma-separated brand terms — used only to seed the first client on a fresh install |
+| `SMM_CONFIG_FILE` | The legacy single-brand config file, read once on upgrade to seed the first client |
 | `SMM_SSH_ENABLED` | Serve the dashboard over SSH (default false) |
 | `SMM_SSH_PORT` | Port to listen on (default 2222) |
 | `SMM_SSH_AUTHORIZED_KEYS` | Public keys allowed to connect |
@@ -1126,11 +1260,11 @@ Three layers, each supervised independently:
 
 ```
 SmmMonitor.Supervisor                    (one_for_one)
-├── SmmMonitor.Config                    runtime-editable settings, file-backed
-├── SmmMonitor.Repo                      SQLite, the durable mention log
+├── SmmMonitor.Repo                      SQLite: clients and the mention log
 ├── SmmMonitor.Persistence.Migrator      migrates on boot, then :ignore
 ├── SmmMonitor.Persistence.Writer        off-critical-path writes
 ├── SmmMonitor.Persistence.Retention     daily prune
+├── SmmMonitor.Clients                   the clients being monitored
 ├── SmmMonitor.Processing.Processor      ETS owner, scoring, aggregation
 ├── SmmMonitor.Alerts                    negative-sentiment spike detection
 ├── SmmMonitor.SSH.Server                remote dashboard, when enabled
@@ -1158,14 +1292,18 @@ clean token and can't corrupt anyone else's. A fetcher that fails with
 `{:rate_limited, ms}` pushes its next poll out by at least that long:
 backing off is the fetcher's decision to make and the worker's to enforce.
 
-**Config.** One GenServer holding the settings a person changes while the
-tool is running: the brand terms and Reddit's subreddit list. Application
-env is the right home for settings fixed at boot — credentials, intervals,
-quota budgets — but it isn't meant to be written to at runtime, so these
-live here instead. It's the single source of truth: fetchers read their
-search terms from it on every poll, which is what makes an edit land on
-the next poll rather than the next restart. Started first, ahead of the
-fetchers that read from it.
+**Clients.** One GenServer holding the clients being monitored, each with
+its own brand terms and subreddits. Application env is the right home for
+settings fixed at boot — credentials, intervals, quota budgets — but it
+isn't meant to be written to at runtime, so these live in SQLite with a
+cached copy here. It's the single source of truth: fetchers read the
+client list on every poll, which is what makes an edit land on the next
+poll rather than the next restart. Started after the repo it reads from
+and before the fetchers that read from it.
+
+Which client a viewer is *looking at* is deliberately not here — that is
+per-session state in the TUI model, so two SSH sessions can watch
+different clients without fighting over a shared selection.
 
 **Persistence.** SQLite via Ecto, kept strictly off the read path. The
 processor hands newly-inserted mentions to `Persistence.Writer` with a
@@ -1374,8 +1512,9 @@ A platform may also set its own `:interval_ms` in the `:platforms` config;
 YouTube does, because its quota makes the global 30s cadence unaffordable.
 
 No brand name, subreddit or search term is hardcoded anywhere in `lib/` —
-every query is built from the shared `:keywords` setting and this config at
-runtime. Both live platforms search for the *same* brand terms.
+every query is built at runtime from the client being polled for. Every
+platform searches for the *same* client's brand terms, and each client's
+Reddit subreddit list is its own.
 
 ## Known limitations
 
@@ -1383,13 +1522,23 @@ runtime. Both live platforms search for the *same* brand terms.
   archive or export.
 * Retention deletes rows but SQLite doesn't shrink the file — see disk
   space above.
-* The config screen edits brand terms and subreddits only. Credentials
-  and mock/live remain env-var controlled and need a restart.
+* The clients screen edits clients, brand terms and subreddits only.
+  Credentials and mock/live remain env-var controlled and need a restart.
 * Sentiment is a word list; sarcasm, negation beyond one word, and
   domain-specific language will all fool it.
-* Credentials are global, not per-client. Monitoring several brands with
-  separate API accounts needs per-client state — worth designing before
-  wiring up Instagram for more than one brand.
+* **Credentials are per install, not per client.** Every client is
+  searched with the same Reddit app, YouTube key and X token, so the API
+  budgets are shared and divide as clients are added — see "How API
+  limits are shared between clients". Monitoring clients under separate
+  API accounts would need credentials on the client record.
+* **Instagram is the exception, awkwardly.** Its endpoints are scoped to
+  one connected Business account, so a second client's Instagram would
+  need its own token and account id. Today every client is polled against
+  the one connected account, which is right for a single-brand install
+  and wrong for an agency — the honest fix is per-client Instagram
+  credentials, and it isn't built.
+* Removing a client deletes its mentions. There is no undo and no export
+  first.
 * Reddit search returns *posts*, not comments. A brand discussed only in
   the comments of someone else's thread won't show up.
 * Reddit's search index lags a little behind new posts, so a mention can
