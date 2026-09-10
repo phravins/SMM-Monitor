@@ -53,6 +53,10 @@ defmodule SmmMonitor.TUI.Renderers.Common do
       alias SmmMonitor.Mention
       alias SmmMonitor.TUI.Model
 
+      # Wide enough for the longest field label ("alert if sentiment"),
+      # so no value starts flush against its own name.
+      @label_width 20
+
       @bar_width 30
       # Odd, so the gauge has a true centre column for the zero marker.
       @gauge_width 25
@@ -379,14 +383,15 @@ defmodule SmmMonitor.TUI.Renderers.Common do
       end
 
       # One block per client: a header row carrying its number and state,
-      # then a row per editable field. A grid rather than a single line
-      # because brand terms and subreddits are both long enough to need
-      # the width.
+      # then a row per editable field — but only for the client being
+      # edited. Seven fields times five clients is a screen nobody can
+      # read, so the rest collapse to a one-line summary and expand when
+      # you move onto them.
       defp client_block(model, client, index) do
         highlighted? = model.selected_client == index and model.editing != :new_client
         viewing? = model.client_id == client.id
 
-        [
+        header =
           label do
             [
               text(
@@ -402,7 +407,45 @@ defmodule SmmMonitor.TUI.Renderers.Common do
               text(content: "  (#{client.id})", color: @muted)
             ] ++ client_badges(client, viewing?, model)
           end
-        ] ++ Enum.map(Model.config_fields(), &client_field(model, client, index, &1))
+
+        if highlighted? do
+          [header] ++ Enum.map(Model.config_fields(), &client_field(model, client, index, &1))
+        else
+          [header, collapsed_summary(client)]
+        end
+      end
+
+      # What a collapsed client is worth saying in one line: what it
+      # watches, and whether anything would wake you about it.
+      defp collapsed_summary(client) do
+        label do
+          [
+            text(content: "        ", color: @muted),
+            text(content: truncate(Enum.join(client.keywords, ", "), 44), color: @muted),
+            text(content: "   ", color: @muted)
+          ] ++ alert_summary(client)
+        end
+      end
+
+      defp alert_summary(%{alerts: nil}), do: [text(content: "")]
+
+      defp alert_summary(%{alerts: alerts}) do
+        cond do
+          not alerts.enabled ->
+            [text(content: "alerts off", color: @neutral)]
+
+          alerts.watch_phrases != [] ->
+            [
+              text(content: "alerts on", color: @positive),
+              text(
+                content: " · #{length(alerts.watch_phrases)} phrase(s)",
+                color: @muted
+              )
+            ]
+
+          true ->
+            [text(content: "alerts on", color: @positive)]
+        end
       end
 
       defp client_badges(client, viewing?, model) do
@@ -430,7 +473,7 @@ defmodule SmmMonitor.TUI.Renderers.Common do
           text(
             content:
               "      #{if selected?, do: "›", else: " "} " <>
-                String.pad_trailing(Model.label(field), 13),
+                String.pad_trailing(Model.label(field), @label_width),
             color: if(selected?, do: @accent, else: @muted),
             attributes: if(selected?, do: @bold, else: [])
           )
@@ -445,7 +488,7 @@ defmodule SmmMonitor.TUI.Renderers.Common do
               text(content: "█", color: @accent)
             ]
           else
-            text(content: field_display(client, field))
+            text(content: field_display(client, field), color: field_color(field))
           end
         end
       end
@@ -475,6 +518,15 @@ defmodule SmmMonitor.TUI.Renderers.Common do
 
       defp config_title(_model), do: "clients · changes are picked up on the next poll"
 
+      # A bare "-0.30" says nothing about which direction trips it.
+      defp field_display(client, :sentiment_threshold = field) do
+        "at or below #{Model.field_value(client, field)}"
+      end
+
+      defp field_display(client, :volume_multiple = field) do
+        "at or above #{Model.field_value(client, field)}x the usual for this hour"
+      end
+
       defp field_display(client, field) do
         case Model.field_value(client, field) do
           "" -> field_placeholder(field)
@@ -482,8 +534,15 @@ defmodule SmmMonitor.TUI.Renderers.Common do
         end
       end
 
+      # The thresholds read as explanation rather than as data, so they
+      # sit back a shade from the values you actually type.
+      defp field_color(field) when field in [:sentiment_threshold, :volume_multiple], do: @muted
+      defp field_color(_field), do: @neutral
+
       defp field_placeholder(:subreddits), do: "(none — searching all of Reddit)"
       defp field_placeholder(:keywords), do: "(none — nothing will be found)"
+      defp field_placeholder(:watch_phrases), do: "(none — no phrase alerts)"
+      defp field_placeholder(:webhook_url), do: "(using the global webhook)"
       defp field_placeholder(_field), do: "(none)"
 
       defp platform_status_row(status) do

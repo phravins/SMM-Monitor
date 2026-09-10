@@ -54,7 +54,11 @@ defmodule SmmMonitor.Clients.Store do
     row = ClientRecord.from_client(client)
 
     repo.insert_all(ClientRecord, [row],
-      on_conflict: {:replace, [:name, :keywords, :subreddits, :active, :updated_at]},
+      # Every column except the two that must never change, rather than
+      # a list to keep in step: naming them individually meant that
+      # adding alert_config silently stopped alert settings being saved,
+      # since the update path quietly wrote every other field instead.
+      on_conflict: {:replace_all_except, [:id, :created_at]},
       conflict_target: [:id]
     )
 
