@@ -72,6 +72,12 @@ config :smm_monitor,
 # experience is still fully mocked.
 config :smm_monitor, :mock_platforms, reddit: RC.bool_or_nil("SMM_MOCK_REDDIT")
 
+# YouTube polls on its own schedule because of the API's daily quota.
+# See the README for the arithmetic behind picking a value.
+if interval_ms = System.get_env("SMM_YOUTUBE_POLL_INTERVAL_MS") do
+  config :smm_monitor, :platforms, youtube: [interval_ms: String.to_integer(interval_ms)]
+end
+
 # Which subreddits the Reddit fetcher watches. Comma-separated; an empty
 # value searches all of Reddit.
 if subreddits = System.get_env("SMM_REDDIT_SUBREDDITS") do

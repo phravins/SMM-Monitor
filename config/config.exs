@@ -25,7 +25,14 @@ config :smm_monitor,
 # Adding a platform is a matter of writing the module and adding a line here.
 config :smm_monitor, :platforms,
   reddit: [module: SmmMonitor.Fetchers.Reddit, enabled: true, opts: []],
-  youtube: [module: SmmMonitor.Fetchers.YouTube, enabled: true, opts: [max_results: 25]],
+  youtube: [
+    module: SmmMonitor.Fetchers.YouTube,
+    enabled: true,
+    # Far slower than the other platforms on purpose: a YouTube search
+    # costs 100 of the 10,000 free daily quota units. See the README.
+    interval_ms: :timer.minutes(5),
+    opts: []
+  ],
   twitter: [module: SmmMonitor.Fetchers.Twitter, enabled: true, opts: []],
   instagram: [module: SmmMonitor.Fetchers.Instagram, enabled: true, opts: []]
 

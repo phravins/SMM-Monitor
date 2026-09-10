@@ -88,12 +88,15 @@ defmodule SmmMonitor.Fetchers.Fetcher do
   @doc """
   How long to wait before the next poll, when an error asks for a delay.
 
-  A fetcher signals this by failing with `{:rate_limited, ms}`; the worker
-  uses it instead of the usual interval. Anything else means "no opinion",
-  and the normal schedule applies.
+  A fetcher signals this by failing with `{:rate_limited, ms}` (a
+  short-term limit, as Reddit reports per minute) or `{:quota_exhausted,
+  ms}` (a budget spent until it resets, as YouTube's daily quota works).
+  The worker uses the delay instead of the usual interval. Anything else
+  means "no opinion", and the normal schedule applies.
   """
   @spec retry_after(term()) :: pos_integer() | nil
   def retry_after({:rate_limited, ms}) when is_integer(ms) and ms > 0, do: ms
+  def retry_after({:quota_exhausted, ms}) when is_integer(ms) and ms > 0, do: ms
   def retry_after(_reason), do: nil
 
   defmacro __using__(opts) do
