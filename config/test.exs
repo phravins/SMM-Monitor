@@ -4,9 +4,17 @@ import Config
 config :smm_monitor,
   # Never let a test write over the real runtime config file.
   config_file: "tmp/test_runtime_config.json",
+  # Boot-loading history would fight tests that assert on an empty store.
+  load_history_on_boot: false,
   start_fetchers: false,
   start_tui: false,
   mock_mode: true,
   poll_interval_ms: 60_000
+
+# A throwaway database per test run, never the real one.
+config :smm_monitor, SmmMonitor.Repo,
+  database: "tmp/test_mentions.db",
+  pool: Ecto.Adapters.SQL.Sandbox,
+  pool_size: 5
 
 config :logger, level: :warning

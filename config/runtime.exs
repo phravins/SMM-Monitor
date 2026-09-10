@@ -63,6 +63,14 @@ config :smm_monitor,
   # `SMM_TUI=1 mix run --no-halt` starts the dashboard from the app itself.
   start_tui: RC.bool("SMM_TUI", false)
 
+# Where collected mentions are stored, and how long they are kept.
+config :smm_monitor, SmmMonitor.Repo,
+  database: System.get_env("SMM_DB_PATH") || SmmMonitor.Persistence.Paths.default_database()
+
+config :smm_monitor, db_retention_days: RC.integer("SMM_RETENTION_DAYS", 30)
+
+config :smm_monitor, history_limit: RC.integer("SMM_HISTORY_LIMIT", 200)
+
 # Per-platform overrides of the global mock switch. Reddit and YouTube
 # have live implementations, so `SMM_MOCK_REDDIT=false` and
 # `SMM_MOCK_YOUTUBE=false` put those on live data while Twitter and
