@@ -9,6 +9,7 @@ defmodule SmmMonitor.Application do
       ├── SmmMonitor.Persistence.Writer      — off-critical-path writes
       ├── SmmMonitor.Persistence.Retention   — daily prune
       ├── SmmMonitor.Processing.Processor    — ETS owner + aggregation
+      ├── SmmMonitor.SSH.Server              — remote dashboard, when enabled
       ├── SmmMonitor.Fetchers.Supervisor     — one child supervisor per platform
       │   ├── PlatformSupervisor(:reddit)    — Worker(:reddit)
       │   ├── PlatformSupervisor(:youtube)   — Worker(:youtube)
@@ -37,6 +38,7 @@ defmodule SmmMonitor.Application do
       [SmmMonitor.Config] ++
         persistence_children() ++
         [SmmMonitor.Processing.Processor] ++
+        ssh_children() ++
         fetcher_children() ++
         tui_children()
 
@@ -60,6 +62,16 @@ defmodule SmmMonitor.Application do
   defp writer_children do
     if SmmMonitor.config(:persist_writes, true) do
       [SmmMonitor.Persistence.Writer, SmmMonitor.Persistence.Retention]
+    else
+      []
+    end
+  end
+
+  # Off unless asked for: a dashboard that starts listening on a port
+  # because someone upgraded is not a pleasant surprise.
+  defp ssh_children do
+    if SmmMonitor.SSH.Server.enabled?() do
+      [SmmMonitor.SSH.Server]
     else
       []
     end

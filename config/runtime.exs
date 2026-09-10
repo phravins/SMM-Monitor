@@ -77,6 +77,19 @@ config :smm_monitor, db_retention_days: RC.integer("SMM_RETENTION_DAYS", 30)
 
 config :smm_monitor, history_limit: RC.integer("SMM_HISTORY_LIMIT", 200)
 
+# Remote dashboard access over SSH. Off unless explicitly enabled.
+config :smm_monitor,
+  ssh_enabled: RC.bool("SMM_SSH_ENABLED", false),
+  ssh_port: RC.integer("SMM_SSH_PORT", 2222)
+
+if authorized_keys = System.get_env("SMM_SSH_AUTHORIZED_KEYS") do
+  config :smm_monitor, ssh_authorized_keys: authorized_keys
+end
+
+if host_key_dir = System.get_env("SMM_SSH_HOST_KEY_DIR") do
+  config :smm_monitor, ssh_host_key_dir: host_key_dir
+end
+
 # Per-platform overrides of the global mock switch. Reddit and YouTube
 # have live implementations, so `SMM_MOCK_REDDIT=false` and
 # `SMM_MOCK_YOUTUBE=false` put those on live data while Twitter and
