@@ -34,7 +34,6 @@ defmodule SmmMonitor.Fetchers.Reddit do
 
   require Logger
 
-  alias SmmMonitor.Config
   alias SmmMonitor.Fetchers.Fetcher
   alias SmmMonitor.Fetchers.Reddit.{Auth, RateLimit, State}
 
@@ -72,11 +71,15 @@ defmodule SmmMonitor.Fetchers.Reddit do
   end
 
   @doc """
-  Effective settings: module config, then the runtime-editable subreddit
-  list from `SmmMonitor.Config`, then anything in the platform's `:opts`.
+  Effective settings: module config, then the subreddit list of the client
+  being polled for, then anything in the platform's `:opts`.
+
+  Subreddits are per client, not global: one client's brand lives in
+  r/marketing and another's in r/gamedev, and searching both lists for
+  both clients would return noise for each.
 
   The `:opts` override is last so tests can inject a stub transport and a
-  fixed subreddit list without going near the running Config process.
+  fixed subreddit list.
   """
   @spec settings(Fetcher.context()) :: keyword()
   def settings(context) do
@@ -84,17 +87,16 @@ defmodule SmmMonitor.Fetchers.Reddit do
 
     :smm_monitor
     |> Application.get_env(__MODULE__, [])
-    |> Keyword.merge(runtime_settings(opts))
+    |> Keyword.merge(client_settings(context, opts))
     |> Keyword.merge(opts)
   end
 
-  # Skipped when :opts already pins the subreddits, so a test never has to
-  # have a Config process running.
-  defp runtime_settings(opts) do
+  # Skipped when :opts already pins the subreddits.
+  defp client_settings(context, opts) do
     if Keyword.has_key?(opts, :subreddits) do
       []
     else
-      [subreddits: Config.subreddits()]
+      [subreddits: Map.get(context, :subreddits) || []]
     end
   end
 

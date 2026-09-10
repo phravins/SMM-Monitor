@@ -3,12 +3,12 @@ defmodule SmmMonitor.Application do
   Top of the supervision tree.
 
       SmmMonitor.Supervisor            (one_for_one)
-      ├── SmmMonitor.Config                  — runtime-editable settings
       ├── SmmMonitor.Persistence.DatabaseFile — creates the file, then :ignore
       ├── SmmMonitor.Repo                    — SQLite, the durable log
       ├── SmmMonitor.Persistence.Migrator    — migrates, then :ignore
       ├── SmmMonitor.Persistence.Writer      — off-critical-path writes
       ├── SmmMonitor.Persistence.Retention   — daily prune
+      ├── SmmMonitor.Clients                 — the clients being monitored
       ├── SmmMonitor.Processing.Processor    — ETS owner + aggregation
       ├── SmmMonitor.Alerts                  — negative-sentiment spikes
       ├── SmmMonitor.SSH.Server              — remote dashboard, when enabled
@@ -19,10 +19,11 @@ defmodule SmmMonitor.Application do
       └── Ratatouille.Runtime.Supervisor     — only when the TUI is enabled
 
   Order matters, and the supervisor's sequential startup is what enforces
-  it: `Config` first because the fetchers read their search terms from it;
-  then the repo, then the migrator, so the table exists before anything
-  queries it; then the processor, which restores history on boot; then the
-  fetchers that write into it.
+  it: the repo and then the migrator, so the tables exist before anything
+  queries them; then `Clients`, which reads the clients table and seeds it
+  from the old single-brand config on an upgrade; then the processor,
+  which restores each client's history on boot; then the fetchers, which
+  read the client list on every poll and write into the processor.
 
   `Migrator` is a child that runs its work in `start_link/1` and returns
   `:ignore`, leaving no process behind. That is deliberate — a `Task`
@@ -37,8 +38,8 @@ defmodule SmmMonitor.Application do
   @impl true
   def start(_type, _args) do
     children =
-      [SmmMonitor.Config] ++
-        persistence_children() ++
+      persistence_children() ++
+        [SmmMonitor.Clients] ++
         [SmmMonitor.Processing.Processor] ++
         alert_children() ++
         ssh_children() ++
