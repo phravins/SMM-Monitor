@@ -106,6 +106,73 @@ defmodule SmmMonitor.Persistence do
     :exit, reason -> {:error, reason}
   end
 
+  @doc """
+  Counts mentions by sentiment for a platform since `cutoff`.
+
+  This is what the alerting baseline is drawn from: "what does a normal
+  hour look like for this platform" can only be answered from stored
+  history, since ETS only holds a rolling window.
+
+  Returns `%{positive: n, neutral: n, negative: n, total: n}`, all zero
+  if the database is unavailable — an unreadable history means "no
+  baseline", which the detector treats as "still warming up" rather than
+  as a reason to alert.
+  """
+  @spec sentiment_counts_since(DateTime.t(), atom(), keyword()) :: %{atom() => non_neg_integer()}
+  def sentiment_counts_since(cutoff, platform \\ :all, opts \\ []) do
+    repo = Keyword.get(opts, :repo, Repo)
+
+    rows =
+      MentionRecord
+      |> where([m], m.source_timestamp >= ^cutoff)
+      |> platform_filter(platform)
+      |> group_by([m], m.sentiment)
+      |> select([m], {m.sentiment, count(m.id)})
+      |> repo.all()
+
+    counts = Map.new(rows, fn {sentiment, count} -> {sentiment, count} end)
+
+    %{
+      positive: Map.get(counts, "positive", 0),
+      neutral: Map.get(counts, "neutral", 0),
+      negative: Map.get(counts, "negative", 0),
+      total: counts |> Map.values() |> Enum.sum()
+    }
+  rescue
+    error ->
+      Logger.warning("database: could not read sentiment history (#{inspect(error)})")
+      empty_counts()
+  catch
+    :exit, reason ->
+      Logger.warning("database: could not read sentiment history (#{inspect(reason)})")
+      empty_counts()
+  end
+
+  @doc """
+  The timestamp of the oldest stored mention, or `nil` when empty.
+
+  Used to work out how much history the baseline actually rests on, so a
+  day-old install isn't treated as having a week of normal.
+  """
+  @spec earliest_timestamp(atom(), keyword()) :: DateTime.t() | nil
+  def earliest_timestamp(platform \\ :all, opts \\ []) do
+    repo = Keyword.get(opts, :repo, Repo)
+
+    MentionRecord
+    |> platform_filter(platform)
+    |> select([m], min(m.source_timestamp))
+    |> repo.one()
+  rescue
+    _error -> nil
+  catch
+    :exit, _reason -> nil
+  end
+
+  defp platform_filter(query, :all), do: query
+  defp platform_filter(query, platform), do: where(query, [m], m.platform == ^to_string(platform))
+
+  defp empty_counts, do: %{positive: 0, neutral: 0, negative: 0, total: 0}
+
   @doc "Total rows stored. Used by tests and the config screen."
   @spec count(keyword()) :: non_neg_integer()
   def count(opts \\ []) do
