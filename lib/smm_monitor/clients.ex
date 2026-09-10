@@ -107,6 +107,16 @@ defmodule SmmMonitor.Clients do
   @spec source(GenServer.server()) :: :database | :memory
   def source(server \\ __MODULE__), do: GenServer.call(server, :source)
 
+  @doc """
+  Replaces the whole list in memory, without touching the database.
+
+  Test helper: it lets a test set up the exact book of clients it needs
+  and put the previous one back afterwards, without writing rows that
+  would outlive the test.
+  """
+  @spec replace(GenServer.server(), [Client.t()]) :: :ok
+  def replace(server \\ __MODULE__, clients), do: GenServer.call(server, {:replace, clients})
+
   @doc "Re-reads from the database, discarding the cache. Test helper."
   @spec reload(GenServer.server()) :: [Client.t()]
   def reload(server \\ __MODULE__), do: GenServer.call(server, :reload)
@@ -182,6 +192,10 @@ defmodule SmmMonitor.Clients do
 
   def handle_call({:get, id}, _from, state) do
     {:reply, Enum.find(state.clients, &(&1.id == id)), state}
+  end
+
+  def handle_call({:replace, clients}, _from, state) do
+    {:reply, :ok, %{state | clients: clients}}
   end
 
   def handle_call(:reload, _from, state) do
