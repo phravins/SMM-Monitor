@@ -13,7 +13,7 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
 
   import ExUnit.CaptureLog
 
-  alias SmmMonitor.Fetchers.{PlatformSupervisor, Reddit, Worker, YouTube}
+  alias SmmMonitor.Fetchers.{Instagram, PlatformSupervisor, Reddit, Twitter, Worker, YouTube}
   alias SmmMonitor.Monitor
 
   setup do
@@ -126,6 +126,121 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
     end
   end
 
+  describe "Twitter with no bearer token" do
+    setup do
+      Application.put_env(:smm_monitor, :mock_platforms, twitter: false)
+      Application.put_env(:smm_monitor, :credentials, twitter: [])
+      :ok
+    end
+
+    test "falls back to mock data instead of crashing" do
+      log =
+        capture_log(fn ->
+          start_worker(:twitter, Twitter)
+          assert eventually(fn -> polled?(:twitter) end)
+        end)
+
+      status = Worker.status(:twitter)
+      assert status.mode == :mock
+      assert status.inserted > 0
+      assert is_nil(status.last_error)
+      assert Monitor.stats(:twitter).count > 0
+      assert log =~ "twitter"
+      assert log =~ "credentials are missing"
+    end
+
+    test "spends nothing from the monthly post cap while falling back" do
+      # No token means no request, so there is no cap to spend.
+      capture_log(fn ->
+        start_worker(:twitter, Twitter)
+        assert eventually(fn -> polled?(:twitter) end)
+      end)
+
+      assert Worker.status(:twitter).mode == :mock
+    end
+
+    test "a blank token is treated as missing" do
+      Application.put_env(:smm_monitor, :credentials, twitter: [bearer_token: "   "])
+
+      capture_log(fn ->
+        start_worker(:twitter, Twitter)
+        assert eventually(fn -> polled?(:twitter) end)
+      end)
+
+      assert Worker.status(:twitter).mode == :mock
+    end
+  end
+
+  describe "Instagram with incomplete credentials" do
+    setup do
+      Application.put_env(:smm_monitor, :mock_platforms, instagram: false)
+      :ok
+    end
+
+    test "falls back to mock data instead of crashing" do
+      Application.put_env(:smm_monitor, :credentials, instagram: [])
+
+      log =
+        capture_log(fn ->
+          start_worker(:instagram, Instagram)
+          assert eventually(fn -> polled?(:instagram) end)
+        end)
+
+      status = Worker.status(:instagram)
+      assert status.mode == :mock
+      assert status.inserted > 0
+      assert is_nil(status.last_error)
+      assert Monitor.stats(:instagram).count > 0
+      assert log =~ "instagram"
+      assert log =~ "credentials are missing"
+    end
+
+    test "a token without a business account id is treated as missing" do
+      # Every Instagram endpoint here is scoped to one account, so a token
+      # alone can't address anything.
+      Application.put_env(:smm_monitor, :credentials, instagram: [access_token: "IGQ..."])
+
+      capture_log(fn ->
+        start_worker(:instagram, Instagram)
+        assert eventually(fn -> polled?(:instagram) end)
+      end)
+
+      assert Worker.status(:instagram).mode == :mock
+    end
+
+    test "a business account id without a token is treated as missing" do
+      Application.put_env(:smm_monitor, :credentials, instagram: [business_account_id: "17841"])
+
+      capture_log(fn ->
+        start_worker(:instagram, Instagram)
+        assert eventually(fn -> polled?(:instagram) end)
+      end)
+
+      assert Worker.status(:instagram).mode == :mock
+    end
+  end
+
+  describe "each platform's credentials are independent of the others" do
+    test "one platform going live doesn't drag the others with it" do
+      # The realistic state of a rollout: Reddit configured, the rest not.
+      Application.put_env(:smm_monitor, :mock_platforms,
+        reddit: false,
+        twitter: false,
+        instagram: false
+      )
+
+      Application.put_env(:smm_monitor, :credentials,
+        reddit: [client_id: "id", client_secret: "secret"],
+        twitter: [],
+        instagram: []
+      )
+
+      assert Reddit.ready?(platform_context(:reddit))
+      refute Twitter.ready?(platform_context(:twitter))
+      refute Instagram.ready?(platform_context(:instagram))
+    end
+  end
+
   describe "a live-configured platform with no credentials" do
     setup do
       # Reddit is told to go live, but no credentials are configured.
@@ -224,6 +339,27 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
     end
   end
 
+  describe "Twitter.ready?/1" do
+    test "is what decides live vs. fallback" do
+      refute Twitter.ready?(platform_context(:twitter, []))
+      refute Twitter.ready?(platform_context(:twitter, bearer_token: nil))
+      refute Twitter.ready?(platform_context(:twitter, bearer_token: ""))
+      assert Twitter.ready?(platform_context(:twitter, bearer_token: "AAAA"))
+    end
+  end
+
+  describe "Instagram.ready?/1" do
+    test "needs both the token and the account it is scoped to" do
+      refute Instagram.ready?(platform_context(:instagram, []))
+      refute Instagram.ready?(platform_context(:instagram, access_token: "IGQ"))
+      refute Instagram.ready?(platform_context(:instagram, business_account_id: "17841"))
+
+      assert Instagram.ready?(
+               platform_context(:instagram, access_token: "IGQ", business_account_id: "17841")
+             )
+    end
+  end
+
   describe "Reddit.ready?/1" do
     test "is what decides live vs. fallback" do
       refute Reddit.ready?(context(credentials: []))
@@ -265,6 +401,23 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
       opts: [],
       poll_count: 0,
       interval_ms: :timer.minutes(18)
+    }
+  end
+
+  # Credentials come from application config when not passed explicitly,
+  # which is how the worker assembles them.
+  defp platform_context(platform, credentials \\ nil) do
+    credentials =
+      credentials ||
+        :smm_monitor |> Application.get_env(:credentials, []) |> Keyword.get(platform, [])
+
+    %{
+      platform: platform,
+      keywords: ["realoffice"],
+      credentials: credentials,
+      opts: [],
+      poll_count: 0,
+      interval_ms: :timer.minutes(5)
     }
   end
 
