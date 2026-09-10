@@ -178,6 +178,7 @@ directory:
 | Runtime config (brand terms) | `/etc/smm-monitor/config.json` | ✅ |
 | Authorized keys | `/etc/smm-monitor/authorized_keys` | ✅ |
 | Secrets | `/etc/smm-monitor/env` | ✅ |
+| Tuned sentiment word lists | `/etc/smm-monitor/sentiment/` | ✅ |
 
 ### Rollback
 
@@ -201,6 +202,26 @@ sudo systemctl restart smm-monitor
 Secrets, ports and poll intervals are read at boot. The **brand terms and
 subreddits are not** — change those live from the config screen, no
 restart needed (see the README).
+
+### Tuning the sentiment word lists
+
+The packaged lists ship inside the release, so edits there are lost on
+the next deploy. Copy the ones you want to tune out to
+`/etc/smm-monitor/sentiment/` instead and point the app at them:
+
+```sh
+sudo install -d -m 0750 -o root -g smm-monitor /etc/smm-monitor/sentiment
+sudo cp /opt/smm-monitor/current/lib/smm_monitor-*/priv/sentiment/mild_negative.txt \
+  /etc/smm-monitor/sentiment/
+sudo editor /etc/smm-monitor/sentiment/mild_negative.txt
+# then add to /etc/smm-monitor/env:
+#   SMM_SENTIMENT_DIR=/etc/smm-monitor/sentiment
+sudo systemctl restart smm-monitor
+```
+
+Any file present there wins; the rest are still read from the release,
+so you override one category without copying all seven. See the README
+for what each list does.
 
 ---
 
@@ -309,6 +330,7 @@ missing, or `SMM_MOCK_REDDIT` / `SMM_MOCK_YOUTUBE` is not `false`.
 | `/etc/smm-monitor/env` | `root:smm-monitor` `0640` | Secrets. Read at boot. |
 | `/etc/smm-monitor/authorized_keys` | `root:smm-monitor` | Who may view the dashboard. |
 | `/etc/smm-monitor/config.json` | `smm-monitor` | Brand terms, written by the config screen. |
+| `/etc/smm-monitor/sentiment/` | `root:smm-monitor` | Word lists overriding the packaged ones. Optional. |
 | `/var/lib/smm-monitor/mentions.db` | `smm-monitor` `0750` | Collected mentions. |
 | `/var/lib/smm-monitor/ssh/` | `smm-monitor` | SSH host key. |
 | `/etc/systemd/system/smm-monitor.service` | `root` | The unit. |
