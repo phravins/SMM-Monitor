@@ -130,16 +130,7 @@ defmodule SmmMonitor.Config.Store do
   unwritable-by-construction.
   """
   @spec user_config_path() :: Path.t()
-  def user_config_path do
-    base =
-      System.get_env("XDG_CONFIG_HOME") ||
-        case System.user_home() do
-          nil -> ".smm_monitor"
-          home -> Path.join(home, ".config")
-        end
-
-    Path.join([base, "smm_monitor", @default_filename])
-  end
+  def user_config_path, do: SmmMonitor.Paths.config(@default_filename)
 
   # --- internals ------------------------------------------------------------
 

@@ -30,18 +30,12 @@ defmodule SmmMonitor.SSH.AuthorizedKeys do
       default_path()
   end
 
-  @doc "Default location, beside the app's other per-user state."
+  @doc """
+  Default location: `/etc/smm-monitor/authorized_keys` under systemd,
+  `~/.config/smm_monitor/authorized_keys` otherwise.
+  """
   @spec default_path() :: Path.t()
-  def default_path do
-    base =
-      System.get_env("XDG_CONFIG_HOME") ||
-        case System.user_home() do
-          nil -> ".smm_monitor"
-          home -> Path.join(home, ".config")
-        end
-
-    Path.join([base, "smm_monitor", "authorized_keys"])
-  end
+  def default_path, do: SmmMonitor.Paths.config("authorized_keys")
 
   @doc """
   Whether `key` is authorised, reading the file fresh.
