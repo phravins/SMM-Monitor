@@ -115,16 +115,17 @@ if host_key_dir = System.get_env("SMM_SSH_HOST_KEY_DIR") do
   config :smm_monitor, ssh_host_key_dir: host_key_dir
 end
 
-# Per-platform overrides of the global mock switch. Reddit and YouTube
-# have live implementations, so `SMM_MOCK_REDDIT=false` and
-# `SMM_MOCK_YOUTUBE=false` put those on live data while Twitter and
-# Instagram stay on fixtures.
+# Per-platform overrides of the global mock switch. All four platforms
+# have live implementations now, so `SMM_MOCK_<PLATFORM>=false` puts that
+# one on live data independently of the others.
 #
 # Unset (nil) means "inherit SMM_MOCK_MODE", so the out-of-the-box
 # experience is still fully mocked.
 config :smm_monitor, :mock_platforms,
   reddit: RC.bool_or_nil("SMM_MOCK_REDDIT"),
-  youtube: RC.bool_or_nil("SMM_MOCK_YOUTUBE")
+  youtube: RC.bool_or_nil("SMM_MOCK_YOUTUBE"),
+  twitter: RC.bool_or_nil("SMM_MOCK_TWITTER"),
+  instagram: RC.bool_or_nil("SMM_MOCK_INSTAGRAM")
 
 # YouTube polls on its own schedule because of the API's daily quota.
 # See the README for the arithmetic behind picking a value.
@@ -134,6 +135,20 @@ end
 
 if budget = System.get_env("SMM_YOUTUBE_DAILY_QUOTA_BUDGET") do
   config :smm_monitor, SmmMonitor.Fetchers.YouTube, daily_quota_budget: String.to_integer(budget)
+end
+
+# Twitter/X. The monthly post cap is the limit that ends a month early
+# and it differs by plan, so the default is deliberately low. See README.
+if budget = System.get_env("SMM_TWITTER_MONTHLY_POST_BUDGET") do
+  config :smm_monitor, SmmMonitor.Fetchers.Twitter, monthly_post_budget: String.to_integer(budget)
+end
+
+if cycle_day = System.get_env("SMM_TWITTER_BILLING_CYCLE_DAY") do
+  config :smm_monitor, SmmMonitor.Fetchers.Twitter, billing_cycle_day: String.to_integer(cycle_day)
+end
+
+if interval_ms = System.get_env("SMM_TWITTER_POLL_INTERVAL_MS") do
+  config :smm_monitor, :platforms, twitter: [interval_ms: String.to_integer(interval_ms)]
 end
 
 # Which subreddits the Reddit fetcher watches. Comma-separated; an empty
@@ -159,5 +174,8 @@ config :smm_monitor, :credentials,
   ],
   instagram: [
     access_token: System.get_env("INSTAGRAM_ACCESS_TOKEN"),
-    user_id: System.get_env("INSTAGRAM_USER_ID")
+    # INSTAGRAM_USER_ID is the older name for the same value; both are
+    # accepted so an existing env file keeps working.
+    business_account_id:
+      System.get_env("INSTAGRAM_BUSINESS_ACCOUNT_ID") || System.get_env("INSTAGRAM_USER_ID")
   ]
