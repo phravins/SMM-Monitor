@@ -168,6 +168,33 @@ defmodule SmmMonitor.Persistence do
   end
 
   @doc """
+  Publication timestamps of a client's mentions since `cutoff`.
+
+  Timestamps alone rather than whole rows: the volume baseline counts
+  mentions per hour and needs nothing else, and a week of full rows for
+  a busy client is a lot of text to read and discard.
+  """
+  @spec timestamps_since(DateTime.t(), keyword()) :: [DateTime.t()]
+  def timestamps_since(cutoff, opts \\ []) do
+    repo = Keyword.get(opts, :repo, Repo)
+
+    MentionRecord
+    |> where([m], m.source_timestamp >= ^cutoff)
+    |> platform_filter(Keyword.get(opts, :platform, :all))
+    |> client_filter(Keyword.get(opts, :client, :all))
+    |> select([m], m.source_timestamp)
+    |> repo.all()
+  rescue
+    error ->
+      Logger.warning("database: could not read mention history (#{inspect(error)})")
+      []
+  catch
+    :exit, reason ->
+      Logger.warning("database: could not read mention history (#{inspect(reason)})")
+      []
+  end
+
+  @doc """
   The timestamp of the oldest stored mention, or `nil` when empty.
 
   Used to work out how much history the baseline actually rests on, so a
