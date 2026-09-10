@@ -284,6 +284,34 @@ defmodule SmmMonitor.ClientsTest do
     end
   end
 
+  describe "the seed and the migration have to agree" do
+    test "a stored client list is used as it is, never re-seeded" do
+      # This is the coupling that broke once: the migration used to write
+      # a stub client row, `init` found the table non-empty, skipped the
+      # seed, and the upgrade came up with an empty keyword list —
+      # monitoring nothing. The migration now leaves the table empty and
+      # lets the seed fill it in, which only works while this holds.
+      set_clients([])
+      {:ok, stored} = Clients.add(%{name: "Already Here", keywords: "existing"})
+
+      {:ok, loaded} = SmmMonitor.Clients.Store.load()
+      found = Enum.find(loaded, &(&1.id == stored.id))
+
+      # Loaded straight back with its own terms — not replaced by a
+      # seeded stub, and not left with an empty keyword list.
+      assert found.name == "Already Here"
+      assert found.keywords == ["existing"]
+    end
+
+    test "the seed's client uses the same id the migration backfills to" do
+      # If these two disagreed, every mention collected before the
+      # upgrade would sit in a second, invisible client.
+      [seeded] = SmmMonitor.Clients.Seed.build(keywords: ["realoffice"])
+
+      assert seeded.id == SmmMonitor.Mention.default_client_id()
+    end
+  end
+
   describe "the list as fetchers see it" do
     test "active/1 is what gets polled, list/1 is what gets displayed" do
       [acme, beta] = set_clients(["Acme", "Beta"])

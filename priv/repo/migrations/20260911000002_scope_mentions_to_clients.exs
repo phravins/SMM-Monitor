@@ -7,7 +7,6 @@ defmodule SmmMonitor.Repo.Migrations.ScopeMentionsToClients do
   # generated so the backfill and the boot-time seed agree without having
   # to pass anything between them.
   @legacy_client_id "unassigned"
-  @legacy_client_name "Unassigned"
 
   def up do
     alter table(:mentions) do
@@ -44,30 +43,18 @@ defmodule SmmMonitor.Repo.Migrations.ScopeMentionsToClients do
 
   # Mentions collected before this update belong to whatever single brand
   # was being tracked at the time, but nothing in the row records which —
-  # so they go to one holding client rather than being guessed at. The
-  # boot-time seed renames it from the old keyword config where it can.
+  # so they all go to one holding client rather than being guessed at.
+  #
+  # The client *row* is deliberately not created here. `SmmMonitor.Clients`
+  # creates it on the next boot, under this same id, filled in from the
+  # old single-brand config — so it arrives with the brand terms that were
+  # actually being tracked. A stub row written here would be found first,
+  # the seed would decide there was nothing to do, and the upgrade would
+  # come up monitoring an empty keyword list.
   defp backfill_existing_mentions do
     orphans = repo().one(from(m in "mentions", where: is_nil(m.client_id), select: count(m.id)))
 
     if orphans > 0 do
-      now = DateTime.utc_now()
-
-      repo().insert_all(
-        "clients",
-        [
-          %{
-            id: @legacy_client_id,
-            name: @legacy_client_name,
-            keywords: "",
-            subreddits: "",
-            active: true,
-            created_at: now,
-            updated_at: now
-          }
-        ],
-        on_conflict: :nothing
-      )
-
       {updated, _returning} =
         repo().update_all(
           from(m in "mentions", where: is_nil(m.client_id)),
@@ -77,8 +64,9 @@ defmodule SmmMonitor.Repo.Migrations.ScopeMentionsToClients do
       # Worth a line in the migration log: it tells the operator where
       # their existing history went, which is otherwise a mystery.
       IO.puts(
-        "  scope_mentions_to_clients: assigned #{updated} existing mention(s) " <>
-          "to the \"#{@legacy_client_name}\" client"
+        "  scope_mentions_to_clients: assigned #{updated} existing mention(s) to the " <>
+          "\"#{@legacy_client_id}\" client, which is created on the next boot from " <>
+          "your previous brand settings"
       )
     end
   end

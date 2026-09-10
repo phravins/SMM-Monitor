@@ -10,6 +10,14 @@ defmodule SmmMonitor.Persistence.ClientRecord do
 
   The id is the slug, used as the primary key, so a mention row carries a
   readable `client_id` rather than an opaque integer.
+
+  ## A note on `active`
+
+  SQLite has no boolean type, and Ecto's `:boolean` loader raises on
+  anything but 1/0. Writes that go through this schema are cast for us;
+  anything writing to the table *without* it — a migration using a raw
+  table name, say — must write 1 or 0, or every later read of the whole
+  table fails and the app falls back to running from memory.
   """
 
   use Ecto.Schema

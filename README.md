@@ -206,16 +206,21 @@ Nothing is lost, and there is nothing to do. On the first boot after this
 update:
 
 1. The **migration** adds `client_id` to every stored mention and assigns
-   existing rows to a holding client, `unassigned`. It prints how many it
-   moved. It can't do better than one holding client: nothing in a
+   existing rows to a holding client id, `unassigned`. It prints how many
+   it moved. It can't do better than one holding client: nothing in a
    mention row records which brand it was collected for, so guessing
    would be worse than admitting it.
-2. **`SmmMonitor.Clients` seeds that client** from your previous
+2. **`SmmMonitor.Clients` then creates that client** from your previous
    settings — the `~/.config/smm_monitor/config.json` file first, falling
    back to `SMM_KEYWORDS` — and names it from the brand term. So
    `["realoffice", "real office"]` becomes a client called *Real office*,
-   already searching for both, and every mention collected before the
-   upgrade belongs to it.
+   already searching for both and watching the same subreddits, and every
+   mention collected before the upgrade belongs to it.
+
+   The migration deliberately does *not* create the row itself. If it
+   did, the seed would find the table already populated, decide there was
+   nothing to do, and the upgrade would come up monitoring an empty
+   keyword list.
 3. The old config file is **left on disk untouched** and never written to
    again, so rolling back to the previous release is a downgrade rather
    than a restore from backup.
