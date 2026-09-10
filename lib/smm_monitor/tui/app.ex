@@ -38,7 +38,7 @@ defmodule SmmMonitor.TUI.App do
       {:event, event} ->
         case renderer().translate_event(event) do
           :ignore -> model
-          key -> Model.handle_key(model, key)
+          key -> model |> Model.handle_key(key) |> maybe_quit()
         end
 
       {:refresh, _event} ->
@@ -52,6 +52,20 @@ defmodule SmmMonitor.TUI.App do
 
   @impl true
   def render(model), do: renderer().render(model)
+
+  # `q` is handled by the model rather than as a Ratatouille quit event,
+  # because the runtime checks quit events *before* the app sees the key —
+  # so a text field could never capture a `q`, and brand terms containing
+  # one would be untypeable. Shutting down here goes through the same
+  # System.stop/0 the runtime's own `shutdown: :system` uses, which stops
+  # the application, terminates Ratatouille.Window, and lets termbox
+  # restore the terminal on the way out.
+  defp maybe_quit(%Model{quit: true} = model) do
+    System.stop()
+    model
+  end
+
+  defp maybe_quit(model), do: model
 
   @doc "The renderer module, so the drawing layer stays swappable via config."
   @spec renderer() :: module()

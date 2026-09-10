@@ -13,12 +13,24 @@ defmodule SmmMonitor.TUI.Model do
   It is also why the dashboard's logic is testable without a terminal.
   """
 
+  alias SmmMonitor.Config
   alias SmmMonitor.Monitor
 
   @default_rows 12
 
   defstruct tab: :all,
             tabs: [:all],
+            # Config screen state. `editing` names the field being typed
+            # into, or nil when the screen is just being read.
+            config: %{keywords: [], subreddits: []},
+            config_source: :defaults,
+            config_path: nil,
+            selected_field: :keywords,
+            editing: nil,
+            buffer: "",
+            flash: nil,
+            # Set when the user asks to quit; the app acts on it.
+            quit: false,
             stats: %{count: 0, positive: 0, neutral: 0, negative: 0, score: 0},
             breakdown: %{},
             mentions: [],
@@ -35,8 +47,18 @@ defmodule SmmMonitor.TUI.Model do
 
   @type t :: %__MODULE__{}
 
-  # Tab shortcuts, per the spec: a for all, t/i/r/y for the platforms.
-  @tab_keys %{?a => :all, ?t => :twitter, ?i => :instagram, ?r => :reddit, ?y => :youtube}
+  # Tab shortcuts: a for all, t/i/r/y for the platforms, c for config.
+  @tab_keys %{
+    ?a => :all,
+    ?t => :twitter,
+    ?i => :instagram,
+    ?r => :reddit,
+    ?y => :youtube,
+    ?c => :config
+  }
+
+  # The fields the config screen can edit, in display order.
+  @config_fields [:keywords, :subreddits]
 
   @doc """
   Builds the initial model.
@@ -48,7 +70,7 @@ defmodule SmmMonitor.TUI.Model do
   @spec new(map()) :: t()
   def new(context \\ %{}) do
     %__MODULE__{
-      tabs: [:all | SmmMonitor.platforms()],
+      tabs: [:all | SmmMonitor.platforms()] ++ [:config],
       rows: rows_for(context),
       keywords: SmmMonitor.config(:keywords, []),
       mock_mode: SmmMonitor.config(:mock_mode, true),
@@ -65,14 +87,20 @@ defmodule SmmMonitor.TUI.Model do
   """
   @spec refresh(t()) :: t()
   def refresh(%__MODULE__{} = model) do
-    mentions = Monitor.recent(model.tab, 200)
+    # The config tab has no mention list of its own; reading for :config
+    # would filter on a platform that doesn't exist.
+    reading_tab = if model.tab == :config, do: :all, else: model.tab
+    mentions = Monitor.recent(reading_tab, 200)
 
     %{
       model
       | mentions: mentions,
-        stats: Monitor.stats(model.tab),
+        stats: Monitor.stats(reading_tab),
         breakdown: Monitor.breakdown(),
         statuses: statuses(),
+        config: read_config(),
+        config_source: config_source(),
+        config_path: config_path(),
         updated_at: DateTime.utc_now()
     }
     |> clamp_offset()
@@ -81,13 +109,32 @@ defmodule SmmMonitor.TUI.Model do
   @doc """
   Applies a key press. Unknown keys leave the model untouched.
 
-  Quitting is handled by the runtime's quit events, not here, so that the
-  terminal is always restored properly on the way out.
+  While a config field is being edited every key goes into the text
+  buffer, so tab shortcuts and `q` are typed rather than acted on — a
+  brand term containing a `q` would otherwise be unreachable. That is why
+  `q` is handled here rather than as a Ratatouille quit event: the runtime
+  checks quit events *before* the app sees the key, so it could never be
+  captured by a text field.
   """
   @spec handle_key(t(), key()) :: t()
+  def handle_key(%__MODULE__{editing: field} = model, key) when not is_nil(field) do
+    handle_edit_key(model, key)
+  end
+
+  def handle_key(%__MODULE__{} = model, {:char, ?q}), do: %{model | quit: true}
+
   def handle_key(%__MODULE__{} = model, {:char, char}) when is_map_key(@tab_keys, char) do
     select_tab(model, @tab_keys[char])
   end
+
+  # On the config screen the same keys move between fields rather than
+  # scrolling a list that isn't there.
+  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?j}), do: move_field(model, 1)
+  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?k}), do: move_field(model, -1)
+  def handle_key(%__MODULE__{tab: :config} = model, {:key, :arrow_down}), do: move_field(model, 1)
+  def handle_key(%__MODULE__{tab: :config} = model, {:key, :arrow_up}), do: move_field(model, -1)
+  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?e}), do: start_editing(model)
+  def handle_key(%__MODULE__{tab: :config} = model, {:key, :enter}), do: start_editing(model)
 
   def handle_key(model, {:char, ?j}), do: scroll(model, 1)
   def handle_key(model, {:char, ?k}), do: scroll(model, -1)
@@ -103,7 +150,8 @@ defmodule SmmMonitor.TUI.Model do
   @spec select_tab(t(), atom()) :: t()
   def select_tab(%__MODULE__{} = model, tab) do
     if tab in model.tabs do
-      refresh(%{model | tab: tab, offset: 0})
+      # Leaving the config screen abandons any half-typed edit.
+      refresh(%{model | tab: tab, offset: 0, editing: nil, buffer: "", flash: nil})
     else
       # An unconfigured platform (e.g. `i` with Instagram disabled) is a
       # no-op rather than an empty screen.
@@ -177,6 +225,10 @@ defmodule SmmMonitor.TUI.Model do
 
   @doc "Label for a tab, with its count, e.g. `\"reddit (12)\"`."
   @spec tab_label(t(), atom()) :: String.t()
+  # The config screen isn't a view over mentions, so a count would be
+  # meaningless there.
+  def tab_label(%__MODULE__{}, :config), do: "config"
+
   def tab_label(%__MODULE__{} = model, :all) do
     "all (#{Enum.sum(Map.values(model.breakdown))})"
   end
@@ -188,6 +240,128 @@ defmodule SmmMonitor.TUI.Model do
   @doc "Whether the mentions list scrolls past the bottom of the table."
   @spec scrollable?(t()) :: boolean()
   def scrollable?(%__MODULE__{} = model), do: length(model.mentions) > model.rows
+
+  # --- config screen --------------------------------------------------------
+
+  @doc "The fields the config screen can edit, in display order."
+  @spec config_fields() :: [atom()]
+  def config_fields, do: @config_fields
+
+  @doc "Moves the selection between config fields, wrapping at the ends."
+  @spec move_field(t(), integer()) :: t()
+  def move_field(%__MODULE__{} = model, delta) do
+    index = Enum.find_index(@config_fields, &(&1 == model.selected_field)) || 0
+
+    next =
+      Enum.at(@config_fields, rem(index + delta + length(@config_fields), length(@config_fields)))
+
+    %{model | selected_field: next, flash: nil}
+  end
+
+  @doc """
+  Starts editing the selected field, seeding the buffer with its current
+  value so an edit is a correction rather than a retype.
+  """
+  @spec start_editing(t()) :: t()
+  def start_editing(%__MODULE__{} = model) do
+    %{
+      model
+      | editing: model.selected_field,
+        buffer: field_value(model, model.selected_field),
+        flash: nil
+    }
+  end
+
+  @doc "Abandons an in-progress edit, leaving the stored value alone."
+  @spec cancel_editing(t()) :: t()
+  def cancel_editing(%__MODULE__{} = model) do
+    %{model | editing: nil, buffer: "", flash: {:info, "cancelled"}}
+  end
+
+  @doc """
+  Commits the buffer to `SmmMonitor.Config`.
+
+  A rejected value (an empty keyword list) leaves the editor open with the
+  reason shown, rather than dropping what was typed.
+  """
+  @spec commit_editing(t()) :: t()
+  def commit_editing(%__MODULE__{editing: nil} = model), do: model
+
+  def commit_editing(%__MODULE__{editing: field, buffer: buffer} = model) do
+    case write_field(field, buffer) do
+      {:ok, values} ->
+        %{
+          model
+          | editing: nil,
+            buffer: "",
+            config: Map.put(model.config, field, values),
+            flash: {:ok, "#{label(field)} saved — fetchers pick this up on their next poll"}
+        }
+
+      {:error, reason} ->
+        %{model | flash: {:error, error_message(field, reason)}}
+    end
+  end
+
+  @doc "The current value of a config field, as the comma-separated text shown."
+  @spec field_value(t(), atom()) :: String.t()
+  def field_value(%__MODULE__{config: config}, field) do
+    config |> Map.get(field, []) |> Enum.join(", ")
+  end
+
+  @doc "Human label for a config field."
+  @spec label(atom()) :: String.t()
+  def label(:keywords), do: "brand terms"
+  def label(:subreddits), do: "subreddits"
+  def label(field), do: to_string(field)
+
+  @doc "Whether the config screen is currently capturing typed input."
+  @spec editing?(t()) :: boolean()
+  def editing?(%__MODULE__{editing: editing}), do: not is_nil(editing)
+
+  # Every key goes into the buffer while editing, so a term containing a
+  # tab shortcut letter (or a `q`) can actually be typed.
+  defp handle_edit_key(model, {:key, :enter}), do: commit_editing(model)
+  defp handle_edit_key(model, {:key, :escape}), do: cancel_editing(model)
+
+  defp handle_edit_key(model, {:key, :backspace}) do
+    %{model | buffer: String.slice(model.buffer, 0..-2//1), flash: nil}
+  end
+
+  defp handle_edit_key(model, {:char, char}) when char >= 32 do
+    %{model | buffer: model.buffer <> <<char::utf8>>, flash: nil}
+  end
+
+  defp handle_edit_key(model, _key), do: model
+
+  defp write_field(:keywords, buffer), do: Config.put_keywords(buffer)
+  defp write_field(:subreddits, buffer), do: Config.put_subreddits(buffer)
+
+  defp error_message(:keywords, :no_keywords),
+    do: "at least one brand term is needed — nothing would be monitored"
+
+  defp error_message(field, reason), do: "could not save #{label(field)}: #{inspect(reason)}"
+
+  # The config screen reads through the same public API as everything else.
+  # A Config process that isn't running (a test rendering the model in
+  # isolation) shows empty rather than crashing the dashboard.
+  defp read_config do
+    Config.all()
+  catch
+    :exit, _reason -> %{keywords: [], subreddits: []}
+  end
+
+  defp config_source do
+    Config.source()
+  catch
+    :exit, _reason -> :unavailable
+  end
+
+  defp config_path do
+    Config.path()
+  catch
+    :exit, _reason -> nil
+  end
 
   # Offsets are clamped rather than rejected so that a shrinking list (after
   # a prune, or a tab switch) can never leave the table showing nothing.

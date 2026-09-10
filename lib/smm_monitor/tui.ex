@@ -10,10 +10,13 @@ defmodule SmmMonitor.TUI do
 
   import Ratatouille.Constants, only: [key: 1]
 
-  # `q` to quit, per the spec, plus ctrl-c as the usual escape hatch. These
-  # are handled by the runtime rather than the model so that termbox always
-  # gets a chance to restore the terminal on the way out.
-  @quit_events [{:ch, ?q}, {:ch, ?Q}, {:key, key(:ctrl_c)}]
+  # Only ctrl-c. `q` used to be here, but the runtime checks quit events
+  # *before* handing the key to the app, so the config screen's text input
+  # could never have captured one — a brand term containing a `q` would be
+  # untypeable. `q` is handled in the model instead (see
+  # `SmmMonitor.TUI.App`); ctrl-c stays here as an always-available escape
+  # hatch that no text field needs.
+  @quit_events [{:key, key(:ctrl_c)}]
 
   @doc """
   Child spec for the Ratatouille runtime supervisor.
