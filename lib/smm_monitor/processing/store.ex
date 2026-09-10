@@ -9,12 +9,16 @@ defmodule SmmMonitor.Processing.Store do
   the caller's process, which keeps the TUI's 1s refresh off the GenServer's
   mailbox.
 
-  The table is an `:ordered_set` keyed by `{epoch_ms, platform, id}`, which
-  gives us chronological iteration for free: "most recent N" is a walk
-  backwards from the last key, and pruning by age is a walk forwards from
-  the first. The platform is part of the key because ids are only unique
-  *within* a platform — a bare `{epoch_ms, id}` would let a Reddit and a
-  YouTube mention that share an id overwrite one another.
+  The table is an `:ordered_set` keyed by `{epoch_ms, platform, client_id,
+  id}`, which gives us chronological iteration for free: "most recent N"
+  is a walk backwards from the last key, and pruning by age is a walk
+  forwards from the first.
+
+  The platform is in the key because ids are only unique *within* a
+  platform — a bare `{epoch_ms, id}` would let a Reddit and a YouTube
+  mention sharing an id overwrite one another. The client is in the key
+  for the same reason one level up: one post can match two clients' brand
+  terms, and each client's dashboard has to show it.
 
   Nothing is persisted — restarting the app starts from an empty table.
   """
@@ -57,28 +61,31 @@ defmodule SmmMonitor.Processing.Store do
     end
   end
 
-  @doc "Whether a mention with the same platform and id is already stored."
+  @doc "Whether the same mention is already stored for the same client."
   @spec member?(table(), Mention.t()) :: boolean()
-  def member?(table, %Mention{id: id, platform: platform}) do
-    # Matches on id and platform but *not* timestamp: a platform that
-    # re-reports a post with a nudged timestamp is still the same mention.
-    match = [{{{:_, platform, id}, :_}, [], [true]}]
+  def member?(table, %Mention{id: id, platform: platform, client_id: client_id}) do
+    # Matches on id, platform and client but *not* timestamp: a platform
+    # that re-reports a post with a nudged timestamp is still the same
+    # mention, while the same post matched for a second client is not.
+    match = [{{{:_, platform, client_id, id}, :_}, [], [true]}]
     :ets.select_count(table, match) > 0
   end
 
   @doc """
   Most recent mentions, newest first.
 
-  `platform` is either `:all` or a platform atom. `since` filters to mentions
-  at or after that millisecond epoch.
+  `platform` is either `:all` or a platform atom. Options are `:limit`,
+  `:since` (a millisecond epoch) and `:client` — a client id, or `:all`
+  to read across every client.
   """
   @spec recent(table(), atom(), keyword()) :: [Mention.t()]
   def recent(table, platform \\ :all, opts \\ []) do
     limit = Keyword.get(opts, :limit, 100)
     since = Keyword.get(opts, :since, 0)
+    client = Keyword.get(opts, :client, :all)
 
     table
-    |> walk_back(:ets.last(table), platform, since, limit, [])
+    |> walk_back(:ets.last(table), {platform, client}, since, limit, [])
     |> Enum.reverse()
   end
 
@@ -87,15 +94,17 @@ defmodule SmmMonitor.Processing.Store do
 
   Unbounded by design — callers are aggregating, not rendering.
   """
-  @spec all(table(), atom(), integer()) :: [Mention.t()]
-  def all(table, platform \\ :all, since \\ 0) do
-    recent(table, platform, limit: :infinity, since: since)
+  @spec all(table(), atom(), keyword()) :: [Mention.t()]
+  def all(table, platform \\ :all, opts \\ []) do
+    recent(table, platform, Keyword.put(opts, :limit, :infinity))
   end
 
-  @doc "Number of stored mentions matching a platform and window."
-  @spec count(table(), atom(), integer()) :: non_neg_integer()
-  def count(table, platform \\ :all, since \\ 0) do
-    :ets.select_count(table, count_spec(platform, since))
+  @doc "Number of stored mentions matching a platform, client and window."
+  @spec count(table(), atom(), keyword()) :: non_neg_integer()
+  def count(table, platform \\ :all, opts \\ []) do
+    since = Keyword.get(opts, :since, 0)
+    client = Keyword.get(opts, :client, :all)
+    :ets.select_count(table, count_spec(platform, client, since))
   end
 
   @doc "Total rows in the table, regardless of platform or age."
@@ -125,22 +134,22 @@ defmodule SmmMonitor.Processing.Store do
 
   # --- internals ------------------------------------------------------------
 
-  defp key(%Mention{id: id, platform: platform} = mention) do
-    {Mention.epoch_ms(mention), platform, id}
+  defp key(%Mention{id: id, platform: platform, client_id: client_id} = mention) do
+    {Mention.epoch_ms(mention), platform, client_id, id}
   end
 
   # Backwards traversal of the ordered_set: newest keys first. Stops as soon
   # as we hit the window boundary or the limit, so a long-lived table doesn't
   # make the TUI's read O(table).
-  defp walk_back(_table, :"$end_of_table", _platform, _since, _remaining, acc), do: acc
-  defp walk_back(_table, _key, _platform, _since, 0, acc), do: acc
+  defp walk_back(_table, :"$end_of_table", _scope, _since, _remaining, acc), do: acc
+  defp walk_back(_table, _key, _scope, _since, 0, acc), do: acc
 
-  defp walk_back(table, {timestamp, _platform, _id} = key, platform, since, remaining, acc)
+  defp walk_back(table, {timestamp, _platform, _client, _id} = key, scope, since, remaining, acc)
        when timestamp >= since do
     {acc, remaining} =
       case :ets.lookup(table, key) do
         [{^key, mention}] ->
-          if matches?(mention, platform),
+          if matches?(mention, scope),
             do: {[mention | acc], decrement(remaining)},
             else: {acc, remaining}
 
@@ -148,31 +157,39 @@ defmodule SmmMonitor.Processing.Store do
           {acc, remaining}
       end
 
-    walk_back(table, :ets.prev(table, key), platform, since, remaining, acc)
+    walk_back(table, :ets.prev(table, key), scope, since, remaining, acc)
   end
 
   # First key older than the window — everything before it is older still.
-  defp walk_back(_table, _key, _platform, _since, _remaining, acc), do: acc
+  defp walk_back(_table, _key, _scope, _since, _remaining, acc), do: acc
 
   defp decrement(:infinity), do: :infinity
   defp decrement(remaining), do: remaining - 1
 
-  defp matches?(%Mention{}, :all), do: true
-  defp matches?(%Mention{platform: platform}, platform), do: true
-  defp matches?(%Mention{}, _platform), do: false
-
-  # Both the timestamp and the platform live in the key, so counting never
-  # has to look at the stored struct.
-  defp count_spec(:all, since) do
-    [{{{:"$1", :_, :_}, :_}, [{:>=, :"$1", since}], [true]}]
+  defp matches?(%Mention{} = mention, {platform, client}) do
+    matches_platform?(mention, platform) and matches_client?(mention, client)
   end
 
-  defp count_spec(platform, since) do
-    [{{{:"$1", platform, :_}, :_}, [{:>=, :"$1", since}], [true]}]
+  defp matches_platform?(%Mention{}, :all), do: true
+  defp matches_platform?(%Mention{platform: platform}, platform), do: true
+  defp matches_platform?(%Mention{}, _platform), do: false
+
+  defp matches_client?(%Mention{}, :all), do: true
+  defp matches_client?(%Mention{client_id: client_id}, client_id), do: true
+  defp matches_client?(%Mention{}, _client), do: false
+
+  # The timestamp, platform and client all live in the key, so counting
+  # never has to look at the stored struct.
+  defp count_spec(platform, client, since) do
+    pattern = {{:"$1", match_or_any(platform), match_or_any(client), :_}, :_}
+    [{pattern, [{:>=, :"$1", since}], [true]}]
   end
+
+  defp match_or_any(:all), do: :_
+  defp match_or_any(value), do: value
 
   defp delete_older_than(table, cutoff) do
-    spec = [{{{:"$1", :_, :_}, :_}, [{:<, :"$1", cutoff}], [true]}]
+    spec = [{{{:"$1", :_, :_, :_}, :_}, [{:<, :"$1", cutoff}], [true]}]
     :ets.select_delete(table, spec)
   end
 

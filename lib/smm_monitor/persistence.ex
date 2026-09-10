@@ -41,7 +41,9 @@ defmodule SmmMonitor.Persistence do
     {count, _returning} =
       repo.insert_all(MentionRecord, rows,
         on_conflict: :nothing,
-        conflict_target: [:platform, :mention_id]
+        # Matches the unique index: the same post collected for two
+        # clients is two rows, not a conflict.
+        conflict_target: [:client_id, :platform, :mention_id]
       )
 
     {:ok, count}
@@ -62,6 +64,21 @@ defmodule SmmMonitor.Persistence do
     Enum.flat_map(platforms, &recent(&1, limit, opts))
   end
 
+  @doc """
+  The most recent `limit` mentions per platform, for each client.
+
+  The boot load reads this way so a quiet client still gets its history
+  back: one global "last N" would hand the whole allowance to whichever
+  client is busiest and leave the others' tabs empty after a restart.
+  """
+  @spec recent_by_client_and_platform([String.t()], [atom()], pos_integer(), keyword()) ::
+          [Mention.t()]
+  def recent_by_client_and_platform(client_ids, platforms, limit, opts \\ []) do
+    Enum.flat_map(client_ids, fn client_id ->
+      Enum.flat_map(platforms, &recent(&1, limit, Keyword.put(opts, :client, client_id)))
+    end)
+  end
+
   @doc "The most recent `limit` mentions for one platform, newest first."
   @spec recent(atom(), pos_integer(), keyword()) :: [Mention.t()]
   def recent(platform, limit, opts \\ []) do
@@ -69,6 +86,7 @@ defmodule SmmMonitor.Persistence do
 
     MentionRecord
     |> where([m], m.platform == ^to_string(platform))
+    |> client_filter(Keyword.get(opts, :client, :all))
     |> order_by([m], desc: m.source_timestamp)
     |> limit(^limit)
     |> repo.all()
@@ -126,6 +144,7 @@ defmodule SmmMonitor.Persistence do
       MentionRecord
       |> where([m], m.source_timestamp >= ^cutoff)
       |> platform_filter(platform)
+      |> client_filter(Keyword.get(opts, :client, :all))
       |> group_by([m], m.sentiment)
       |> select([m], {m.sentiment, count(m.id)})
       |> repo.all()
@@ -160,6 +179,7 @@ defmodule SmmMonitor.Persistence do
 
     MentionRecord
     |> platform_filter(platform)
+    |> client_filter(Keyword.get(opts, :client, :all))
     |> select([m], min(m.source_timestamp))
     |> repo.one()
   rescue
@@ -170,6 +190,9 @@ defmodule SmmMonitor.Persistence do
 
   defp platform_filter(query, :all), do: query
   defp platform_filter(query, platform), do: where(query, [m], m.platform == ^to_string(platform))
+
+  defp client_filter(query, :all), do: query
+  defp client_filter(query, client_id), do: where(query, [m], m.client_id == ^to_string(client_id))
 
   defp empty_counts, do: %{positive: 0, neutral: 0, negative: 0, total: 0}
 
@@ -184,13 +207,14 @@ defmodule SmmMonitor.Persistence do
     :exit, _reason -> 0
   end
 
-  @doc "Rows stored for one platform."
+  @doc "Rows stored for one platform, optionally scoped to one client."
   @spec count(atom(), keyword()) :: non_neg_integer()
   def count(platform, opts) do
     repo = Keyword.get(opts, :repo, Repo)
 
     MentionRecord
-    |> where([m], m.platform == ^to_string(platform))
+    |> platform_filter(platform)
+    |> client_filter(Keyword.get(opts, :client, :all))
     |> repo.aggregate(:count)
   rescue
     _error -> 0

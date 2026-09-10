@@ -19,6 +19,9 @@ defmodule SmmMonitor.Mention do
     :url,
     # DateTime the mention was published (UTC).
     :timestamp,
+    # Which client's brand this mention is about. One post can match two
+    # clients' terms and is then two mentions, one per client.
+    client_id: "unassigned",
     # :positive | :neutral | :negative — filled in by the processing
     # layer, derived from sentiment_value.
     sentiment: :neutral,
@@ -38,6 +41,7 @@ defmodule SmmMonitor.Mention do
   @type t :: %__MODULE__{
           id: String.t(),
           platform: atom(),
+          client_id: String.t(),
           author: String.t(),
           text: String.t(),
           url: String.t() | nil,
@@ -61,6 +65,7 @@ defmodule SmmMonitor.Mention do
     %__MODULE__{
       id: to_string(Map.get(attrs, :id) || generate_id()),
       platform: attrs |> Map.fetch!(:platform) |> to_atom(),
+      client_id: to_string(Map.get(attrs, :client_id) || default_client_id()),
       author: to_string(Map.get(attrs, :author, "unknown")),
       text: to_string(Map.get(attrs, :text, "")),
       url: attrs[:url],
@@ -126,4 +131,14 @@ defmodule SmmMonitor.Mention do
   end
 
   defp generate_id, do: 16 |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
+
+  @doc """
+  Where a mention with no client lands.
+
+  Matches the holding client the migration assigns pre-multi-client rows
+  to, so an untagged mention and an old stored one end up together rather
+  than in two different unknowns.
+  """
+  @spec default_client_id() :: String.t()
+  def default_client_id, do: "unassigned"
 end

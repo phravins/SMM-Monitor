@@ -93,8 +93,8 @@ defmodule SmmMonitor.Processing.StoreTest do
     end
 
     test "counts within a window", %{table: table} do
-      assert Store.count(table, :all, ms_ago(60)) == 2
-      assert Store.count(table, :reddit, ms_ago(60)) == 1
+      assert Store.count(table, :all, since: ms_ago(60)) == 2
+      assert Store.count(table, :reddit, since: ms_ago(60)) == 1
     end
   end
 

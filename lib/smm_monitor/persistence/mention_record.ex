@@ -22,6 +22,9 @@ defmodule SmmMonitor.Persistence.MentionRecord do
     # which is what stops a restart re-inserting what we already have.
     field(:mention_id, :string)
     field(:platform, :string)
+    # Which client's brand this mention is about. The natural key is
+    # (client_id, platform, mention_id): one post can match two clients.
+    field(:client_id, :string)
     field(:author, :string)
     field(:text, :string)
     field(:url, :string)
@@ -50,6 +53,7 @@ defmodule SmmMonitor.Persistence.MentionRecord do
     %{
       mention_id: mention.id,
       platform: to_string(mention.platform),
+      client_id: mention.client_id,
       author: mention.author,
       text: mention.text,
       url: mention.url,
@@ -76,6 +80,10 @@ defmodule SmmMonitor.Persistence.MentionRecord do
     %Mention{
       id: record.mention_id,
       platform: String.to_existing_atom(record.platform),
+      # Rows written before clients existed were backfilled by the
+      # migration, but a row read from a partially-migrated database
+      # still needs somewhere to belong.
+      client_id: record.client_id || Mention.default_client_id(),
       author: record.author,
       text: record.text,
       url: record.url,
