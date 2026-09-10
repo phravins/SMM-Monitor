@@ -11,13 +11,21 @@ defmodule SmmMonitor.Fetchers.Fetcher do
 
   ## Per-platform state
 
-  Most platforms need nothing between polls and can ignore the state
-  argument entirely (`init_state/1` defaults to `nil`). Reddit is the
-  reason it exists: it caches an OAuth token and its rate-limit quota
-  there, so the token survives from one poll to the next and is refreshed
-  only when it is close to expiring. The state lives in the worker's
-  GenServer state, which means a crashing platform starts again with a
-  clean token and cannot corrupt anyone else's.
+  A platform can ignore the state argument entirely (`init_state/1`
+  defaults to `nil`), but in practice every live fetcher here uses it,
+  and always for the same reason: an API limit that has to be remembered
+  between polls.
+
+    * Reddit caches its OAuth token and rate-limit window, so the token
+      survives from poll to poll and is refreshed only near expiry.
+    * YouTube carries the day's quota spend.
+    * Twitter carries two trackers, because X applies two limits: a
+      15-minute request window and a monthly post cap.
+    * Instagram carries Meta's throttle reading and the hashtag ids it
+      has resolved.
+
+  The state lives in the worker's GenServer state, which means a
+  crashing platform starts again clean and cannot corrupt anyone else's.
 
   ## Adding a platform
 
