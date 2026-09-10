@@ -87,10 +87,102 @@ directory and works.
 | --- | --- |
 | `a` | All platforms |
 | `t` `i` `r` `y` | Twitter · Instagram · Reddit · YouTube |
+| `c` | Config screen (see below) |
 | `j` / `k`, `↑` / `↓` | Scroll the mentions table |
 | `PgUp` / `PgDn` | Scroll a screen at a time |
 | `g` / `Home` | Jump to the newest mention |
-| `q` | Quit |
+| `q` | Quit (or `Ctrl-C`) |
+
+On the config screen, `j`/`k` move between fields, `e` or `Enter` starts
+editing, `Enter` saves and `Esc` cancels. **While you're editing a field
+every key is typed**, including `q` and the tab letters — so a brand term
+like "quality" or "clarity" goes in fine. `Ctrl-C` always quits.
+
+## Changing what's tracked, without a restart
+
+Press `c` for the config screen:
+
+```
+┌─config · edit and fetchers pick it up next poll──────────────────────────────┐
+│                                                                              │
+│  › brand terms   realoffice, real office                                     │
+│    subreddits    smallbusiness, marketing, socialmedia, Entrepreneur         │
+│                                                                              │
+│  PLATFORM MODE                                                               │
+│    reddit        live                                                        │
+│    youtube       mock                                                        │
+│    twitter       mock                                                        │
+│    instagram     mock                                                        │
+│                                                                              │
+│  mock/live is set by environment variables and needs a restart               │
+│                                                                              │
+│  ✓ brand terms saved — fetchers pick this up on their next poll              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+Two fields are editable, and a change takes effect on each platform's
+**next poll** — no restart. Reddit polls every 30s, YouTube every 5
+minutes by default, so give it a moment.
+
+| Field | What it does |
+| --- | --- |
+| **brand terms** | The search terms, shared by every platform. Comma-separated; multi-word terms are quoted as phrases automatically. At least one is required. |
+| **subreddits** | Which subreddits Reddit watches. Comma-separated. Leave it empty to search all of Reddit. |
+
+The platform mode rows are **read-only**. Mock/live and credentials are
+environment-controlled and still need a restart — see the table at the end
+of this section.
+
+### Where it's saved
+
+`~/.config/smm_monitor/config.json` (honouring `XDG_CONFIG_HOME`), or
+wherever `SMM_CONFIG_FILE` points. It holds only the two editable fields:
+
+```json
+{
+  "version": 1,
+  "keywords": ["realoffice", "real office"],
+  "subreddits": ["marketing", "smallbusiness"],
+  "updated_at": "2026-09-10T09:15:00Z"
+}
+```
+
+**No credentials are in it**, so it's safe to read, diff and hand to
+someone. The screen shows the path it's writing to.
+
+Not under `priv/`, which is the obvious-looking choice: `:code.priv_dir/1`
+resolves to the *build* copy (`_build/dev/lib/smm_monitor/priv/`), not the
+source tree, so settings saved there are a build artifact — `mix clean`
+would discard them, and a release replaces its `priv` directory wholesale
+on upgrade. Your saved brand terms should outlive a rebuild.
+
+### If the file is missing or broken
+
+Neither stops the app booting.
+
+| Situation | What happens |
+| --- | --- |
+| **Missing** | Normal — it's the state before anyone has changed anything. The env-var/compile-time defaults are used, and the file appears on the first save. |
+| **Corrupt** (bad JSON, or valid JSON of the wrong shape) | Logged, moved aside to `config.json.corrupt` so you can inspect it, and the defaults are used. The config screen says the previous file was unreadable rather than hiding it. |
+| **One bad field** | That field falls back to its default; the others are still read. A malformed `subreddits` doesn't cost you your `keywords`. |
+| **Unwritable** (read-only disk) | The change still applies in memory for this run — losing your edit because the disk objected would be worse — and a warning is logged. |
+
+Writes are atomic (written to a temp file, then renamed), so an
+interrupted write leaves the previous file intact rather than a truncated
+one.
+
+### What needs a restart
+
+| Setting | Changed how |
+| --- | --- |
+| Brand terms | **Config screen, live** |
+| Reddit subreddits | **Config screen, live** |
+| Mock/live per platform (`SMM_MOCK_*`) | Env var + restart |
+| API credentials (`REDDIT_*`, `YOUTUBE_API_KEY`) | Env var + restart |
+| Poll intervals, quota budget, window/retention | Env var + restart |
+
+Credentials are deliberately not editable from the screen: they belong in
+the environment, not in a file the dashboard writes.
 
 ## Live data
 
@@ -328,7 +420,8 @@ its text.
 | `SMM_MOCK_MODE` | Global switch; `true` (default) forces fixtures everywhere |
 | `SMM_MOCK_REDDIT` | Per-platform override for Reddit. Unset inherits the global. |
 | `SMM_MOCK_YOUTUBE` | Per-platform override for YouTube. Unset inherits the global. |
-| `SMM_KEYWORDS` | Comma-separated brand terms to search for |
+| `SMM_KEYWORDS` | Comma-separated brand terms — the *default* before anything is saved from the config screen |
+| `SMM_CONFIG_FILE` | Where runtime-editable settings are saved |
 | `SMM_POLL_INTERVAL_MS` | Poll interval per platform (default 30000) |
 | `SMM_REDDIT_SUBREDDITS` | Comma-separated subreddits to watch. Empty searches all of Reddit. |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` | Reddit **(live)** |
@@ -368,6 +461,7 @@ Three layers, each supervised independently:
 
 ```
 SmmMonitor.Supervisor                    (one_for_one)
+├── SmmMonitor.Config                    runtime-editable settings, file-backed
 ├── SmmMonitor.Processing.Processor      ETS owner, scoring, aggregation
 ├── SmmMonitor.Fetchers.Supervisor       (one_for_one)
 │   ├── PlatformSupervisor(:reddit)    → Worker(:reddit)
@@ -392,6 +486,15 @@ in the worker's GenServer state, so a crashing platform restarts with a
 clean token and can't corrupt anyone else's. A fetcher that fails with
 `{:rate_limited, ms}` pushes its next poll out by at least that long:
 backing off is the fetcher's decision to make and the worker's to enforce.
+
+**Config.** One GenServer holding the settings a person changes while the
+tool is running: the brand terms and Reddit's subreddit list. Application
+env is the right home for settings fixed at boot — credentials, intervals,
+quota budgets — but it isn't meant to be written to at runtime, so these
+live here instead. It's the single source of truth: fetchers read their
+search terms from it on every poll, which is what makes an edit land on
+the next poll rather than the next restart. Started first, ahead of the
+fetchers that read from it.
 
 **Processing.** One GenServer with a narrow job: score sentiment,
 de-duplicate, store, prune. It doesn't fetch and it doesn't render. Writes
@@ -512,6 +615,8 @@ terminal.
 
 Tests run with `start_fetchers: false` and `start_tui: false`, so they get
 the processing layer and nothing else: no 30s polls racing assertions.
+`:config_file` points at `tmp/`, so a test can never write over a real
+config.
 
 ## Configuration reference
 
@@ -529,6 +634,7 @@ Compile-time defaults live in `config/config.exs`:
 | `:start_fetchers` | `true` | Whether the tree starts the fetching layer |
 | `:start_tui` | `false` | Whether the tree starts the dashboard |
 | `:renderer` | `RatatouilleRenderer` | The TUI drawing layer |
+| `:config_file` | per-user path | Where runtime-editable settings are saved |
 | `:platforms` | four entries | Platform → module, enabled flag, opts |
 
 Reddit has its own block, since these are deployment choices rather than
@@ -561,7 +667,10 @@ runtime. Both live platforms search for the *same* brand terms.
 
 ## Known limitations
 
-* No persistence — a restart loses the window of stored mentions.
+* No persistence of *mentions* — a restart loses the stored window. The
+  config screen's settings do persist.
+* The config screen edits brand terms and subreddits only. Credentials
+  and mock/live remain env-var controlled and need a restart.
 * Sentiment is a word list; sarcasm, negation beyond one word, and
   domain-specific language will all fool it.
 * Credentials are global, not per-client. Monitoring several brands with
