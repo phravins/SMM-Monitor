@@ -65,14 +65,18 @@ This is an upstream packaging issue, not a problem with this project.
 | `mix smm.tui` | Starts the supervision tree and the dashboard. The usual way. |
 | `SMM_TUI=1 mix run --no-halt` | Same thing via the app's own config flag. |
 | `mix run --no-halt` | Runs the fetchers and processing layer headless, no UI. |
-| `MIX_ENV=prod mix release` | Builds a self-contained release (see below). |
+| `./scripts/build_release.sh` | Builds a self-contained release and packages it (see [DEPLOY.md](DEPLOY.md)). |
 | `mix test` | The test suite (no fetchers, no TUI — see `config/test.exs`). |
 
-To hand the dashboard to someone else, build a release and run it with the
-TUI flag set:
+To run it as a background service on a server — systemd unit, dedicated
+user, env file for secrets — see **[DEPLOY.md](DEPLOY.md)**. The release
+bundles the Erlang runtime, so the target needs neither Elixir nor
+Erlang installed.
+
+To just run a release locally with the dashboard attached:
 
 ```sh
-MIX_ENV=prod mix release
+./scripts/build_release.sh --no-tar
 SMM_TUI=1 _build/prod/rel/smm_monitor/bin/smm_monitor start
 ```
 
