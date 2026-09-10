@@ -107,7 +107,11 @@ defmodule SmmMonitor.Fetchers.Reddit.Auth do
             auth: {:basic, "#{client_id}:#{client_secret}"},
             form: [grant_type: "client_credentials"],
             headers: [{"user-agent", user_agent(credentials)}],
-            receive_timeout: 10_000
+            receive_timeout: 10_000,
+            # We do our own retrying: the worker polls again on a schedule.
+            # Req's default would also retry a 429, which is exactly the
+            # request we must not repeat.
+            retry: false
           ] ++ req_options
         )
 

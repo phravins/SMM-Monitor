@@ -24,9 +24,20 @@ config :smm_monitor,
 # One entry per platform worker. `module` implements SmmMonitor.Fetchers.Fetcher.
 # Adding a platform is a matter of writing the module and adding a line here.
 config :smm_monitor, :platforms,
-  reddit: [module: SmmMonitor.Fetchers.Reddit, enabled: true, opts: [subreddits: ["all"]]],
+  reddit: [module: SmmMonitor.Fetchers.Reddit, enabled: true, opts: []],
   youtube: [module: SmmMonitor.Fetchers.YouTube, enabled: true, opts: [max_results: 25]],
   twitter: [module: SmmMonitor.Fetchers.Twitter, enabled: true, opts: []],
   instagram: [module: SmmMonitor.Fetchers.Instagram, enabled: true, opts: []]
+
+# Reddit is the one platform with a live implementation. Which subreddits
+# to watch is deployment-specific, so `SMM_REDDIT_SUBREDDITS` overrides
+# this list at runtime. An empty list searches all of Reddit.
+config :smm_monitor, SmmMonitor.Fetchers.Reddit,
+  subreddits: ["smallbusiness", "marketing", "socialmedia", "Entrepreneur"],
+  # Items per request. Reddit caps a listing at 100.
+  limit: 50,
+  sort: "new",
+  # How far back the search reaches: hour, day, week, month, year, all.
+  time_filter: "week"
 
 import_config "#{config_env()}.exs"
