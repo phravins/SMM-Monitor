@@ -45,7 +45,12 @@ defmodule SmmMonitor.MixProject do
       {:ratatouille, "~> 0.5.1"},
       # HTTP client for the real platform APIs.
       {:req, "~> 0.5"},
-      {:jason, "~> 1.4"}
+      {:jason, "~> 1.4"},
+      # Durable storage for collected mentions. ecto_sqlite3 is the
+      # standard Elixir/SQLite pairing and uses exqlite as its driver, so
+      # this isn't a choice against exqlite - exqlite still does the work.
+      {:ecto_sql, "~> 3.14"},
+      {:ecto_sqlite3, "~> 0.24"}
     ]
   end
 end
