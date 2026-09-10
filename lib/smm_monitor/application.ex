@@ -4,6 +4,7 @@ defmodule SmmMonitor.Application do
 
       SmmMonitor.Supervisor            (one_for_one)
       ├── SmmMonitor.Config                  — runtime-editable settings
+      ├── SmmMonitor.Persistence.DatabaseFile — creates the file, then :ignore
       ├── SmmMonitor.Repo                    — SQLite, the durable log
       ├── SmmMonitor.Persistence.Migrator    — migrates, then :ignore
       ├── SmmMonitor.Persistence.Writer      — off-critical-path writes
@@ -52,7 +53,13 @@ defmodule SmmMonitor.Application do
   # before — an in-memory dashboard.
   defp persistence_children do
     if SmmMonitor.config(:start_persistence, true) do
-      [SmmMonitor.Repo, SmmMonitor.Persistence.Migrator] ++ writer_children()
+      [
+        # Before the repo: puts a brand-new file into WAL mode on one
+        # connection, so the pool's connections don't race to do it.
+        SmmMonitor.Persistence.DatabaseFile,
+        SmmMonitor.Repo,
+        SmmMonitor.Persistence.Migrator
+      ] ++ writer_children()
     else
       []
     end
