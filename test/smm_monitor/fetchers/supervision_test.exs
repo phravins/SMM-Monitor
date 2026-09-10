@@ -17,20 +17,21 @@ defmodule SmmMonitor.Fetchers.SupervisionTest do
 
     # A long interval: these tests are about supervision, not polling. The
     # startup poll still runs, which is what populates the store below.
-    {:ok, supervisor} =
-      Supervisor.start_link(
-        [
-          {PlatformSupervisor, platform: :reddit, module: Reddit, interval_ms: 60_000},
-          {PlatformSupervisor, platform: :youtube, module: YouTube, interval_ms: 60_000}
-        ],
-        strategy: :one_for_one
-      )
+    children = [
+      {PlatformSupervisor, platform: :reddit, module: Reddit, interval_ms: 60_000},
+      {PlatformSupervisor, platform: :youtube, module: YouTube, interval_ms: 60_000}
+    ]
 
-    on_exit(fn ->
-      # `Process.exit/2` rather than `Supervisor.stop/1` so a supervisor that
-      # already died doesn't fail the test in teardown.
-      if Process.alive?(supervisor), do: Process.exit(supervisor, :normal)
-    end)
+    # start_supervised! rather than Supervisor.start_link: ExUnit stops it
+    # *synchronously* between tests. Linking to the test process only makes
+    # teardown asynchronous, which let the next test race the previous
+    # supervisor's registered names and fail with :already_started.
+    supervisor =
+      start_supervised!(%{
+        id: :fetchers_under_test,
+        start: {Supervisor, :start_link, [children, [strategy: :one_for_one]]},
+        type: :supervisor
+      })
 
     {:ok, supervisor: supervisor}
   end

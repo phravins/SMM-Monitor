@@ -21,6 +21,25 @@ defmodule SmmMonitor do
   @spec config(atom(), term()) :: term()
   def config(key, default \\ nil), do: Application.get_env(:smm_monitor, key, default)
 
+  @doc """
+  Whether `platform` should serve fixture data instead of calling its API.
+
+  `:mock_mode` is the global default; `:mock_platforms` overrides it per
+  platform, so one platform can go live while the rest stay on fixtures.
+  An entry of `nil` (an unset environment variable) means "inherit the
+  global setting" rather than "live".
+  """
+  @spec mock_platform?(atom()) :: boolean()
+  def mock_platform?(platform) do
+    :smm_monitor
+    |> Application.get_env(:mock_platforms, [])
+    |> Keyword.get(platform)
+    |> case do
+      nil -> config(:mock_mode, true)
+      value -> value
+    end
+  end
+
   @doc "The platforms configured for this instance, in display order."
   @spec platforms() :: [atom()]
   def platforms do

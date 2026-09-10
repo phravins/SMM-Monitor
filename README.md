@@ -94,44 +94,139 @@ directory and works.
 
 ## Live data
 
-Everything runs on fixtures until you say otherwise. To go live, set
-`SMM_MOCK_MODE=false` and provide credentials:
+Everything runs on fixtures until you say otherwise. **Reddit is the one
+platform with a live implementation** — the rest are fixture-backed, so
+turning Reddit on changes one tab and leaves the others exactly as they
+were.
+
+### Getting Reddit API credentials
+
+Reddit's "script" app type is free and needs no approval wait.
+
+1. Sign in to Reddit and go to <https://www.reddit.com/prefs/apps>.
+2. Scroll to the bottom and click **"are you a developer? create an app…"**
+   (or **"create another app…"**).
+3. Fill in the form:
+   - **name** — anything, e.g. `smm-monitor`
+   - **type** — choose **script**. This is the important one: `script` is
+     what enables the `client_credentials` grant with no user, no redirect
+     and no review.
+   - **description** / **about url** — optional, leave blank
+   - **redirect uri** — required by the form but unused by this grant.
+     `http://localhost:8080` is fine.
+4. Click **create app**. You'll land on the app's detail box.
+5. Read the two values off that box:
+   - **client id** — the short string directly under the app's name, just
+     below the words *"personal use script"*. It is *not* labelled.
+   - **client secret** — the field explicitly labelled **secret**.
+
+Both belong to your Reddit account, so treat the secret like a password.
+Rate limits are counted per client id: 60 requests/minute.
+
+### Setting the environment variables
 
 ```sh
 cp .env.example .env
-# fill in the keys you have
+```
+
+Then edit `.env` and set these four:
+
+```sh
+SMM_MOCK_REDDIT=false                       # the switch that turns Reddit live
+REDDIT_CLIENT_ID=your_client_id
+REDDIT_CLIENT_SECRET=your_client_secret
+REDDIT_USER_AGENT=smm_monitor/0.1 (by /u/yourusername)
+```
+
+Load them into your shell and start the dashboard:
+
+```sh
 set -a; source .env; set +a
 mix smm.tui
 ```
 
-A platform without credentials **keeps serving mock data** rather than
-failing — a missing key degrades one tab instead of emptying the
-dashboard. The status line at the bottom shows each worker's actual mode.
+The status line at the bottom of the dashboard shows each worker's actual
+mode — you should see `reddit:live` alongside `youtube:mock`,
+`twitter:mock` and `instagram:mock`.
+
+`.env` is gitignored. Credentials are read in `config/runtime.exs`, which
+runs on every boot (including from a release), so nothing is hardcoded and
+nothing is committed.
+
+> **On the user agent:** Reddit rejects requests with a generic or empty
+> user agent, and asks that you identify yourself. Including your Reddit
+> username is the convention.
+
+### Switching between mock and live
+
+There are two switches. The per-platform one wins:
+
+| Setting | Effect |
+| --- | --- |
+| *(nothing set)* | Everything mocked. This is the default. |
+| `SMM_MOCK_REDDIT=false` | Reddit live, everything else mocked. |
+| `SMM_MOCK_REDDIT=true` | Reddit mocked, even with credentials set. |
+| `SMM_MOCK_MODE=false` | Global default flips to live. Only Reddit has a live implementation, so in practice this is the same as the second row. |
+
+`SMM_MOCK_REDDIT` unset means *"inherit `SMM_MOCK_MODE`"*, not *"go live"* —
+so you can't accidentally start hitting the API by never setting it.
+
+**A platform without credentials keeps serving mock data** rather than
+failing. Set `SMM_MOCK_REDDIT=false` but forget the client secret and
+you'll get fixtures plus one clear warning in the log:
+
+```
+[warning] reddit is configured for live data but its credentials are
+missing or incomplete - falling back to mock data. See the README for the
+environment variables this platform needs.
+```
+
+That's deliberate: a missing key should degrade one tab, not empty the
+dashboard or crash the app.
+
+### What Reddit gets asked
+
+Each poll is **one** HTTP request. The configured subreddits are combined
+into a single multireddit search (`/r/marketing+smallbusiness/search`)
+rather than one request per subreddit, so watching twenty subreddits costs
+the same quota as watching one.
+
+Search terms come from `SMM_KEYWORDS`; multi-word terms are quoted as
+phrases, and terms are OR-ed together. `SMM_KEYWORDS=realoffice,real office`
+becomes `realoffice OR "real office"`.
+
+At the default 30-second poll interval that's 2 requests/minute against a
+60/minute budget. The fetcher tracks the quota Reddit reports on every
+response and stops five requests short of the limit, so a burst from
+something else sharing the credentials can't push you into a hard 429.
+
+### Environment variables
 
 | Variable | Used by |
 | --- | --- |
 | `SMM_MOCK_MODE` | Global switch; `true` (default) forces fixtures everywhere |
+| `SMM_MOCK_REDDIT` | Per-platform override for Reddit. Unset inherits the global. |
 | `SMM_KEYWORDS` | Comma-separated brand terms to search for |
 | `SMM_POLL_INTERVAL_MS` | Poll interval per platform (default 30000) |
-| `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` | Reddit |
-| `YOUTUBE_API_KEY` | YouTube |
-| `TWITTER_BEARER_TOKEN` | Twitter/X (stubbed — see below) |
+| `SMM_REDDIT_SUBREDDITS` | Comma-separated subreddits to watch. Empty searches all of Reddit. |
+| `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` | Reddit **(live)** |
+| `YOUTUBE_API_KEY` | YouTube (mock — see below) |
+| `TWITTER_BEARER_TOKEN` | Twitter/X (stubbed) |
 | `INSTAGRAM_ACCESS_TOKEN` / `INSTAGRAM_USER_ID` | Instagram (stubbed) |
-
-Credentials are read in `config/runtime.exs`, which runs on every boot
-(including from a release). Nothing is hardcoded and nothing is committed.
 
 ## What's real and what's stubbed
 
 | Platform | Status |
 | --- | --- |
-| **Reddit** | Implemented. App-only OAuth, `/search` sorted by new. Free tier. |
-| **YouTube** | Implemented. Data API v3 `search.list` with an API key. Free tier, but `search.list` costs 100 quota units per call — raise `SMM_POLL_INTERVAL_MS` before running it live for long. |
+| **Reddit** | **Live.** OAuth2 script app, `client_credentials` grant, multireddit `/search` sorted by new. Token cached in the worker and refreshed before expiry; rate limit tracked from Reddit's own headers. Free tier. |
+| **YouTube** | **Mock.** The Data API v3 `search.list` call is written and its mapping is tested, but the platform is left on fixtures for now. Note `search.list` costs 100 quota units per call, so raise `SMM_POLL_INTERVAL_MS` before turning it on. |
 | **Twitter/X** | **Stubbed.** Recent search needs a paid Basic tier; there's no free read tier to develop against. The payload mapping (`Twitter.parse/1`) is written and tested; only the HTTP call is missing. |
 | **Instagram** | **Stubbed.** Needs a Business/Creator account, a linked Facebook Page and app review — and the Graph API only surfaces mentions *of your own account*, not arbitrary brand terms. Mapping written and tested. |
 
 Both stubs list the exact remaining steps in their moduledocs. Because
-they're mock-backed, their tabs, counts and sentiment bars all work today.
+every non-Reddit platform is fixture-backed, their tabs, counts and
+sentiment bars all work today — the dashboard looks and behaves the same
+whether or not you have any credentials.
 
 **Sentiment is keyword-based**, not ML: positive and negative word lists,
 with handling for negations ("not great") and intensifiers ("very good").
@@ -166,6 +261,13 @@ polling and the dashboard keeps rendering. Workers schedule the next poll
 can never stack polls on top of each other. An expected `{:error, reason}`
 is logged and retried; an unexpected exception is left to crash the worker
 so its supervisor can restart it clean.
+
+Each worker also carries its platform's own state between polls — for
+Reddit, the cached OAuth token and the rate-limit quota. That state lives
+in the worker's GenServer state, so a crashing platform restarts with a
+clean token and can't corrupt anyone else's. A fetcher that fails with
+`{:rate_limited, ms}` pushes its next poll out by at least that long:
+backing off is the fetcher's decision to make and the worker's to enforce.
 
 **Processing.** One GenServer with a narrow job: score sentiment,
 de-duplicate, store, prune. It doesn't fetch and it doesn't render. Writes
@@ -202,12 +304,16 @@ defmodule SmmMonitor.Fetchers.Mastodon do
   @impl true
   def ready?(context), do: is_binary(context.credentials[:access_token])
 
+  # Optional: anything to carry between polls (a token, a cursor).
   @impl true
-  def fetch(context) do
+  def init_state(_context), do: nil
+
+  @impl true
+  def fetch(context, state) do
     # Call the API, then map onto SmmMonitor.Mention.new/1 attrs:
     #   %{id:, platform:, author:, text:, url:, timestamp:}
     # Keep the mapping in a public parse/1 so it's testable without HTTP.
-    {:ok, mentions}
+    {:ok, mentions, state}
   end
 end
 ```
@@ -241,6 +347,32 @@ isolation property (kill a worker, check its sibling is untouched and the
 stored mentions survive). Rendering itself isn't tested — that needs a
 terminal.
 
+**Nothing in the suite touches the network**, including the Reddit tests:
+
+* Parsing runs against `test/fixtures/reddit_search.json`, a payload
+  mirroring Reddit's documented `Listing` / `t3` shape. To replace it with
+  a response captured from your own account, grab a token and save a real
+  search:
+
+  ```sh
+  TOKEN=$(curl -s -X POST \
+    -u "$REDDIT_CLIENT_ID:$REDDIT_CLIENT_SECRET" \
+    -d grant_type=client_credentials \
+    -A "$REDDIT_USER_AGENT" \
+    https://www.reddit.com/api/v1/access_token | jq -r .access_token)
+
+  curl -s -H "Authorization: Bearer $TOKEN" -A "$REDDIT_USER_AGENT" \
+    "https://oauth.reddit.com/r/marketing/search?q=yourbrand&sort=new&limit=5&raw_json=1" \
+    > test/fixtures/reddit_search.json
+  ```
+
+  The parse tests assert on specific post ids, so they'll need updating to
+  match whatever you capture.
+
+* The auth, rate-limit and full-fetch tests use a stub Req adapter
+  (`test/support/reddit_stub.ex`), which scripts responses per request kind
+  so a test can say "401 first, then 200".
+
 Tests run with `start_fetchers: false` and `start_tui: false`, so they get
 the processing layer and nothing else: no 30s polls racing assertions.
 
@@ -256,10 +388,25 @@ Compile-time defaults live in `config/config.exs`:
 | `:retention_ms` | 48h | Age at which mentions are pruned |
 | `:max_mentions` | `2_000` | Hard cap on stored rows |
 | `:mock_mode` | `true` | Serve fixtures instead of calling APIs |
+| `:mock_platforms` | `[]` | Per-platform overrides of `:mock_mode` |
 | `:start_fetchers` | `true` | Whether the tree starts the fetching layer |
 | `:start_tui` | `false` | Whether the tree starts the dashboard |
 | `:renderer` | `RatatouilleRenderer` | The TUI drawing layer |
 | `:platforms` | four entries | Platform → module, enabled flag, opts |
+
+Reddit has its own block, since these are deployment choices rather than
+app-wide ones:
+
+```elixir
+config :smm_monitor, SmmMonitor.Fetchers.Reddit,
+  subreddits: ["smallbusiness", "marketing", "socialmedia", "Entrepreneur"],
+  limit: 50,          # items per request; Reddit caps a listing at 100
+  sort: "new",
+  time_filter: "week" # hour, day, week, month, year, all
+```
+
+No brand name or subreddit is hardcoded anywhere in `lib/` — the query is
+built from `:keywords` and this list at runtime.
 
 ## Known limitations
 
@@ -271,3 +418,10 @@ Compile-time defaults live in `config/config.exs`:
   wiring up Instagram for more than one brand.
 * No alerting. A spike in negative sentiment shows on the bar but doesn't
   notify anyone.
+* Reddit search returns *posts*, not comments. A brand discussed only in
+  the comments of someone else's thread won't show up.
+* Reddit's search index lags a little behind new posts, so a mention can
+  take a few minutes to appear. `time_filter` bounds how far back a poll
+  looks; mentions older than that are never seen at all.
+* Only Reddit is live. YouTube's call is written but the platform is left
+  on fixtures; Twitter and Instagram need paid or reviewed API access.
