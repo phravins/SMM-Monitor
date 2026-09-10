@@ -64,8 +64,14 @@ config :smm_monitor,
   start_tui: RC.bool("SMM_TUI", false)
 
 # Where collected mentions are stored, and how long they are kept.
-config :smm_monitor, SmmMonitor.Repo,
-  database: System.get_env("SMM_DB_PATH") || SmmMonitor.Persistence.Paths.default_database()
+#
+# Guarded on the environment because runtime.exs runs in *every* env,
+# including test: without this it overrides config/test.exs and points the
+# suite at the operator's real mention history.
+if config_env() != :test do
+  config :smm_monitor, SmmMonitor.Repo,
+    database: System.get_env("SMM_DB_PATH") || SmmMonitor.Persistence.Paths.default_database()
+end
 
 config :smm_monitor, db_retention_days: RC.integer("SMM_RETENTION_DAYS", 30)
 

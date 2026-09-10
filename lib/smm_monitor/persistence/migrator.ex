@@ -43,7 +43,9 @@ defmodule SmmMonitor.Persistence.Migrator do
   @doc "Runs migrations, returning the versions applied."
   @spec migrate(module()) :: {:ok, [integer()]} | {:error, term()}
   def migrate(repo \\ SmmMonitor.Repo) do
-    {:ok, versions} = Ecto.Migrator.run(repo, migrations_path(), :up, all: true)
+    # Ecto.Migrator.run/4 returns a bare list of applied versions, not an
+    # {:ok, _} tuple.
+    versions = Ecto.Migrator.run(repo, migrations_path(), :up, all: true)
     {:ok, versions}
   rescue
     error -> {:error, error}

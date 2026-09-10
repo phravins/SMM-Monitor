@@ -74,7 +74,9 @@ defmodule SmmMonitor.Persistence.Writer do
       {:error, reason} ->
         # Logged once per failure rather than per mention; history has a
         # gap, but the dashboard and fetchers are unaffected.
-        Logger.warning("database: could not store #{length(mentions)} mention(s): #{inspect(reason)}")
+        Logger.warning(
+          "database: could not store #{length(mentions)} mention(s): #{inspect(reason)}"
+        )
 
         {:noreply, %{state | failures: state.failures + 1, last_error: reason}}
     end

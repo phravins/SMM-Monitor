@@ -100,8 +100,11 @@ defmodule SmmMonitor.Processing.Processor do
 
     # Restoring history reads from disk, so it happens after init returns
     # rather than holding up the supervision tree behind it.
-    {:ok, %State{table: table, persist?: Keyword.get(opts, :persist?, true)},
-     {:continue, {:load_history, opts}}}
+    {:ok,
+     %State{
+       table: table,
+       persist?: Keyword.get(opts, :persist?, SmmMonitor.config(:persist_writes, true))
+     }, {:continue, {:load_history, opts}}}
   end
 
   @impl true

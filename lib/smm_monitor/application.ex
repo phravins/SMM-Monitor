@@ -48,12 +48,18 @@ defmodule SmmMonitor.Application do
   # before — an in-memory dashboard.
   defp persistence_children do
     if SmmMonitor.config(:start_persistence, true) do
-      [
-        SmmMonitor.Repo,
-        SmmMonitor.Persistence.Migrator,
-        SmmMonitor.Persistence.Writer,
-        SmmMonitor.Persistence.Retention
-      ]
+      [SmmMonitor.Repo, SmmMonitor.Persistence.Migrator] ++ writer_children()
+    else
+      []
+    end
+  end
+
+  # Tests keep the repo (so they have a database to assert against) but
+  # start their own writer inside the sandbox, rather than having a
+  # long-lived one writing outside any test's ownership.
+  defp writer_children do
+    if SmmMonitor.config(:persist_writes, true) do
+      [SmmMonitor.Persistence.Writer, SmmMonitor.Persistence.Retention]
     else
       []
     end

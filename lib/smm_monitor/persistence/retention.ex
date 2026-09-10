@@ -109,7 +109,13 @@ defmodule SmmMonitor.Persistence.Retention do
 
       {:ok, count} ->
         Logger.info("database: pruned #{count} mention(s) older than #{days} days")
-        %{state | deleted: state.deleted + count, runs: state.runs + 1, last_run_at: DateTime.utc_now()}
+
+        %{
+          state
+          | deleted: state.deleted + count,
+            runs: state.runs + 1,
+            last_run_at: DateTime.utc_now()
+        }
 
       {:error, reason} ->
         # A failed prune is not worth crashing over; it retries tomorrow.

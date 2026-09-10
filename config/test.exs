@@ -6,6 +6,10 @@ config :smm_monitor,
   config_file: "tmp/test_runtime_config.json",
   # Boot-loading history would fight tests that assert on an empty store.
   load_history_on_boot: false,
+  # The repo still runs, so tests have a database; the writer and the
+  # retention job are started per-test inside the sandbox instead of
+  # writing from outside any test's ownership.
+  persist_writes: false,
   start_fetchers: false,
   start_tui: false,
   mock_mode: true,
