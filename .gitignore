@@ -34,3 +34,6 @@ smm_monitor-*.tar
 .elixir_ls/
 .lexical/
 .DS_Store
+
+# Packaged releases from scripts/build_release.sh.
+/dist/
