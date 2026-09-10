@@ -37,6 +37,7 @@ defmodule SmmMonitor.Clients do
   require Logger
 
   alias SmmMonitor.{Client, Mention}
+  alias SmmMonitor.Client.AlertConfig
   alias SmmMonitor.Clients.{Seed, Store}
 
   defmodule State do
@@ -95,6 +96,19 @@ defmodule SmmMonitor.Clients do
   """
   @spec remove(GenServer.server(), String.t()) :: {:ok, non_neg_integer()} | {:error, atom()}
   def remove(server \\ __MODULE__, id), do: GenServer.call(server, {:remove, id})
+
+  @doc """
+  Updates one alert setting on a client.
+
+  Separate from `update/3` because the value needs validating against
+  that setting's own rules — a sentiment threshold outside -1.0..1.0 is
+  always-on or never-on, and either is worse than a rejection.
+  """
+  @spec put_alert_setting(GenServer.server(), String.t(), atom(), term()) ::
+          {:ok, Client.t()} | {:error, atom()}
+  def put_alert_setting(server \\ __MODULE__, id, field, value) do
+    GenServer.call(server, {:put_alert_setting, id, field, value})
+  end
 
   @doc "Pauses or resumes polling for a client, keeping its history."
   @spec set_active(GenServer.server(), String.t(), boolean()) ::
@@ -234,6 +248,18 @@ defmodule SmmMonitor.Clients do
           {:error, reason} ->
             {:reply, {:error, reason}, state}
         end
+    end
+  end
+
+  def handle_call({:put_alert_setting, id, field, value}, _from, state) do
+    with %Client{} = existing <- Enum.find(state.clients, &(&1.id == id)) || {:error, :not_found},
+         {:ok, alerts} <- AlertConfig.put(existing.alerts || AlertConfig.new(), field, value),
+         {:ok, updated} <- Client.update(existing, %{alerts: alerts}) do
+      persist(state, fn repo -> Store.upsert(updated, repo) end)
+      clients = Enum.map(state.clients, &if(&1.id == id, do: updated, else: &1))
+      {:reply, {:ok, updated}, %{state | clients: clients}}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 

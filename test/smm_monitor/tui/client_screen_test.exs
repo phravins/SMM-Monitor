@@ -160,6 +160,155 @@ defmodule SmmMonitor.TUI.ClientScreenTest do
     end
   end
 
+  describe "editing alert settings" do
+    test "the alert fields sit after the monitoring ones" do
+      # The order they get set up in: decide what to watch, then decide
+      # what is worth being woken for.
+      assert Model.config_fields() == [
+               :name,
+               :keywords,
+               :subreddits,
+               :watch_phrases,
+               :sentiment_threshold,
+               :volume_multiple,
+               :webhook_url
+             ]
+    end
+
+    test "watch phrases are edited like any other list", %{model: model} do
+      model =
+        model
+        |> to_field(:watch_phrases)
+        |> Model.handle_key({:char, ?e})
+        |> type("lawsuit, refund")
+        |> Model.handle_key({:key, :enter})
+
+      assert Clients.get("acme").alerts.watch_phrases == ["lawsuit", "refund"]
+      assert {:ok, message} = model.flash
+      assert message =~ "alerting picks this up"
+    end
+
+    test "phrases are stored lowercased, so matching is case insensitive",
+         %{model: model} do
+      model
+      |> to_field(:watch_phrases)
+      |> Model.handle_key({:char, ?e})
+      |> type("Lawsuit, REFUND")
+      |> Model.handle_key({:key, :enter})
+
+      assert Clients.get("acme").alerts.watch_phrases == ["lawsuit", "refund"]
+    end
+
+    test "a sentiment threshold is saved as a number", %{model: model} do
+      model
+      |> to_field(:sentiment_threshold)
+      |> Model.handle_key({:char, ?e})
+      |> clear_buffer()
+      |> type("-0.55")
+      |> Model.handle_key({:key, :enter})
+
+      assert Clients.get("acme").alerts.sentiment_threshold == -0.55
+    end
+
+    test "a threshold outside the sentiment range is refused with the reason",
+         %{model: model} do
+      # Sentiment runs -1.0..1.0, so -5 is always-on and 5 is never-on.
+      model =
+        model
+        |> to_field(:sentiment_threshold)
+        |> Model.handle_key({:char, ?e})
+        |> clear_buffer()
+        |> type("-5")
+        |> Model.handle_key({:key, :enter})
+
+      assert {:error, message} = model.flash
+      assert message =~ "-1.00 to 1.00"
+      assert Clients.get("acme").alerts.sentiment_threshold == -0.3
+    end
+
+    test "something that isn't a number is refused", %{model: model} do
+      model =
+        model
+        |> to_field(:volume_multiple)
+        |> Model.handle_key({:char, ?e})
+        |> clear_buffer()
+        |> type("lots")
+        |> Model.handle_key({:key, :enter})
+
+      assert {:error, message} = model.flash
+      assert message =~ "needs a number"
+    end
+
+    test "a volume multiple of 1x or less is refused", %{model: model} do
+      # It would alert on every ordinary hour.
+      model =
+        model
+        |> to_field(:volume_multiple)
+        |> Model.handle_key({:char, ?e})
+        |> clear_buffer()
+        |> type("1")
+        |> Model.handle_key({:key, :enter})
+
+      assert {:error, message} = model.flash
+      assert message =~ "every ordinary hour"
+    end
+
+    test "a client's own Slack webhook is saved", %{model: model} do
+      model
+      |> to_field(:webhook_url)
+      |> Model.handle_key({:char, ?e})
+      |> type("https://hooks.slack.com/services/T/B/x")
+      |> Model.handle_key({:key, :enter})
+
+      assert Clients.get("acme").alerts.webhook_url ==
+               "https://hooks.slack.com/services/T/B/x"
+    end
+
+    test "a webhook that isn't https is refused", %{model: model} do
+      model =
+        model
+        |> to_field(:webhook_url)
+        |> Model.handle_key({:char, ?e})
+        |> type("hooks.slack.com/services/T/B/x")
+        |> Model.handle_key({:key, :enter})
+
+      assert {:error, message} = model.flash
+      assert message =~ "https://"
+    end
+
+    test "clearing the webhook falls back to the global one", %{model: model} do
+      model
+      |> to_field(:webhook_url)
+      |> Model.handle_key({:char, ?e})
+      |> type("https://hooks.slack.com/services/T/B/x")
+      |> Model.handle_key({:key, :enter})
+
+      Model.new()
+      |> Model.select_tab(:config)
+      |> to_field(:webhook_url)
+      |> Model.handle_key({:char, ?e})
+      |> clear_buffer()
+      |> Model.handle_key({:key, :enter})
+
+      assert Clients.get("acme").alerts.webhook_url == nil
+    end
+
+    test "the screen shows the thresholds in force", %{model: model} do
+      assert Model.field_value(Model.highlighted_client(model), :sentiment_threshold) == "-0.30"
+      assert Model.field_value(Model.highlighted_client(model), :volume_multiple) == "3.0"
+    end
+
+    test "a read-only session cannot change them" do
+      model = Model.new(%{read_only: true}) |> Model.select_tab(:config)
+
+      edited = model |> to_field(:watch_phrases) |> Model.handle_key({:char, ?e})
+
+      refute Model.editing?(edited)
+      assert {:error, message} = edited.flash
+      assert message =~ "read-only"
+    end
+  end
+
   describe "adding a client" do
     test "'+' opens a name editor", %{model: model} do
       model = Model.handle_key(model, {:char, ?+})
@@ -309,6 +458,13 @@ defmodule SmmMonitor.TUI.ClientScreenTest do
 
       assert Enum.map(Clients.list(), & &1.id) == ["first-client"]
     end
+  end
+
+  # Walks the field cursor onto `field` with the same key the operator
+  # would use, rather than reaching into the model.
+  defp to_field(model, field) do
+    steps = Enum.find_index(Model.config_fields(), &(&1 == field))
+    Enum.reduce(1..steps//1, model, fn _step, acc -> Model.handle_key(acc, {:char, ?l}) end)
   end
 
   defp type(model, text) do

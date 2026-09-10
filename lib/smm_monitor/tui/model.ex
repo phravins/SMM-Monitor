@@ -15,6 +15,7 @@ defmodule SmmMonitor.TUI.Model do
 
   alias SmmMonitor.Alerts
   alias SmmMonitor.{Client, Clients}
+  alias SmmMonitor.Client.AlertConfig
   alias SmmMonitor.Monitor
   alias SmmMonitor.Processing.Sentiment
 
@@ -84,7 +85,22 @@ defmodule SmmMonitor.TUI.Model do
   }
 
   # The fields of a client the config screen can edit, in display order.
-  @config_fields [:name, :keywords, :subreddits]
+  # The alerting settings sit after the monitoring ones because that is
+  # the order they are set up in: decide what to watch, then decide what
+  # is worth being woken for.
+  @config_fields [
+    :name,
+    :keywords,
+    :subreddits,
+    :watch_phrases,
+    :sentiment_threshold,
+    :volume_multiple,
+    :webhook_url
+  ]
+
+  # The subset that lives on the client's alert config rather than on the
+  # client itself, and so is written through a different door.
+  @alert_fields [:watch_phrases, :sentiment_threshold, :volume_multiple, :webhook_url]
 
   @doc """
   Builds the initial model.
@@ -552,7 +568,7 @@ defmodule SmmMonitor.TUI.Model do
         %{model | editing: nil, buffer: "", flash: {:error, "that client is no longer there"}}
 
       client ->
-        case Clients.update(client.id, %{field => buffer}) do
+        case write_field(client, field, buffer) do
           {:ok, updated} ->
             %{refresh(%{model | editing: nil, buffer: ""}) | flash: saved_flash(field, updated)}
 
@@ -560,6 +576,17 @@ defmodule SmmMonitor.TUI.Model do
             %{model | flash: {:error, error_message(field, reason)}}
         end
     end
+  end
+
+  # Alert settings validate against their own rules — a sentiment
+  # threshold outside -1.0..1.0 is always-on or never-on — so they go
+  # through the door that reports why rather than the one that coerces.
+  defp write_field(client, field, buffer) when field in @alert_fields do
+    Clients.put_alert_setting(client.id, field, buffer)
+  end
+
+  defp write_field(client, field, buffer) do
+    Clients.update(client.id, %{field => buffer})
   end
 
   @doc """
@@ -650,8 +677,32 @@ defmodule SmmMonitor.TUI.Model do
   def field_value(%Client{keywords: keywords}, :keywords), do: Enum.join(keywords, ", ")
   def field_value(%Client{subreddits: subreddits}, :subreddits), do: Enum.join(subreddits, ", ")
 
+  def field_value(%Client{} = client, field) when field in @alert_fields do
+    alert_value(client.alerts || AlertConfig.new(), field)
+  end
+
+  def field_value(%Client{}, _field), do: ""
+
+  defp alert_value(%AlertConfig{} = config, :watch_phrases) do
+    Enum.join(config.watch_phrases, ", ")
+  end
+
+  defp alert_value(%AlertConfig{} = config, :sentiment_threshold) do
+    :erlang.float_to_binary(config.sentiment_threshold, decimals: 2)
+  end
+
+  defp alert_value(%AlertConfig{} = config, :volume_multiple) do
+    :erlang.float_to_binary(config.volume_multiple, decimals: 1)
+  end
+
+  defp alert_value(%AlertConfig{} = config, :webhook_url), do: config.webhook_url || ""
+
   @doc "Human label for a client field."
   @spec label(atom()) :: String.t()
+  def label(:watch_phrases), do: "alert phrases"
+  def label(:sentiment_threshold), do: "alert if sentiment"
+  def label(:volume_multiple), do: "alert if volume"
+  def label(:webhook_url), do: "slack webhook"
   def label(:name), do: "name"
   def label(:keywords), do: "brand terms"
   def label(:subreddits), do: "subreddits"
@@ -678,6 +729,17 @@ defmodule SmmMonitor.TUI.Model do
 
   defp error_message(:keywords, :no_keywords),
     do: "at least one brand term is needed — nothing would be monitored"
+
+  defp error_message(:sentiment_threshold, :out_of_range),
+    do: "sentiment runs from -1.00 to 1.00, so a threshold outside that never changes anything"
+
+  defp error_message(:volume_multiple, :out_of_range),
+    do: "a multiple of 1x or less would alert on every ordinary hour"
+
+  defp error_message(field, :not_a_number), do: "#{label(field)} needs a number"
+
+  defp error_message(:webhook_url, :invalid_webhook_url),
+    do: "a Slack webhook URL starts with https:// — leave it empty to use the global one"
 
   defp error_message(:name, :missing_name), do: "a client needs a name"
   defp error_message(:name, :name_too_long), do: "that name is too long to fit the dashboard"
@@ -739,6 +801,10 @@ defmodule SmmMonitor.TUI.Model do
 
   defp saved_flash(:name, client) do
     {:ok, "renamed to #{client.name} — its history and id are unchanged"}
+  end
+
+  defp saved_flash(field, _client) when field in @alert_fields do
+    {:ok, "#{label(field)} saved — alerting picks this up within a minute"}
   end
 
   defp saved_flash(field, _client) do

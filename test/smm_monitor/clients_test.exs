@@ -232,6 +232,38 @@ defmodule SmmMonitor.ClientsTest do
       assert [%{keywords: ["acme", "acme corp"]}] = matching
     end
 
+    test "an alert setting is saved, not just remembered" do
+      # This one broke once: the upsert named the columns it replaced,
+      # and alert_config was not among them — so every threshold change
+      # was memory-only and gone on the next restart.
+      set_clients([])
+      {:ok, client} = Clients.add(%{name: "Acme", keywords: "acme"})
+
+      {:ok, _updated} = Clients.put_alert_setting(client.id, :watch_phrases, "lawsuit, refund")
+      {:ok, _updated} = Clients.put_alert_setting(client.id, :sentiment_threshold, "-0.45")
+
+      {:ok, stored} = SmmMonitor.Clients.Store.load()
+      found = Enum.find(stored, &(&1.id == client.id))
+
+      assert found.alerts.watch_phrases == ["lawsuit", "refund"]
+      assert found.alerts.sentiment_threshold == -0.45
+    end
+
+    test "editing a client keeps the alert settings it already had" do
+      # The mirror of the bug above: a rename must not reset thresholds.
+      set_clients([])
+      {:ok, client} = Clients.add(%{name: "Acme", keywords: "acme"})
+      {:ok, _updated} = Clients.put_alert_setting(client.id, :watch_phrases, "lawsuit")
+
+      {:ok, _renamed} = Clients.update(client.id, %{name: "Acme Corporation"})
+
+      {:ok, stored} = SmmMonitor.Clients.Store.load()
+      found = Enum.find(stored, &(&1.id == client.id))
+
+      assert found.name == "Acme Corporation"
+      assert found.alerts.watch_phrases == ["lawsuit"]
+    end
+
     test "removing a client takes its mentions with it" do
       # A client row with no mentions, or mentions with no client, are
       # both states nothing else in the app knows how to render.

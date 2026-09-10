@@ -10,7 +10,7 @@ defmodule SmmMonitor.Application do
       ├── SmmMonitor.Persistence.Retention   — daily prune
       ├── SmmMonitor.Clients                 — the clients being monitored
       ├── SmmMonitor.Processing.Processor    — ETS owner + aggregation
-      ├── SmmMonitor.Alerts                  — negative-sentiment spikes
+      ├── SmmMonitor.Alerts                  — sentiment, volume and phrases
       ├── SmmMonitor.SSH.Server              — remote dashboard, when enabled
       ├── SmmMonitor.Fetchers.Supervisor     — one child supervisor per platform
       │   ├── PlatformSupervisor(:reddit)    — Worker(:reddit)

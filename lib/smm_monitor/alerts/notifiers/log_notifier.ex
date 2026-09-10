@@ -15,6 +15,13 @@ defmodule SmmMonitor.Alerts.Notifiers.LogNotifier do
   def configured?, do: true
 
   @impl true
+  # A resolution is good news and logs as such: an all-clear at :error
+  # would trip whatever is watching the log for errors.
+  def notify(%Alert{state: :resolved} = alert) do
+    Logger.info("RESOLVED #{Alert.message(alert)}")
+    :ok
+  end
+
   def notify(%Alert{severity: :critical} = alert) do
     Logger.error("ALERT #{Alert.message(alert)}")
     :ok

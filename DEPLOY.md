@@ -275,7 +275,8 @@ than silent. Things worth grepping for:
 
 | Pattern | Meaning |
 | --- | --- |
-| `ALERT` | A negative-sentiment spike fired |
+| `ALERT` | An alert fired: sentiment, volume or a watch phrase |
+| `RESOLVED` | An alert cleared, with how long it ran |
 | `falling back to mock data` | A platform is missing credentials |
 | `quota budget spent` | YouTube stopped polling until midnight Pacific |
 | `rejected connection` | Someone tried to connect with an unauthorised key |

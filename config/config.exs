@@ -26,15 +26,13 @@ config :smm_monitor,
   start_fetchers: true,
   # The TUI is started by `mix smm.tui` / the escript, not by the app itself.
   start_tui: false,
-  # Watch for spikes in negative sentiment. On by default, but it cannot
-  # fire until it has enough history to know what normal looks like.
+  # Watch each client for sentiment drops, volume spikes and watch
+  # phrases. On by default; the thresholds themselves live on the client
+  # (SmmMonitor.Client.AlertConfig), not here, because they differ by
+  # brand.
   alerts_enabled: true,
-  # The window compared against the baseline.
-  alert_window_ms: :timer.hours(1),
-  # How much history the baseline is drawn from.
+  # How many days of same-hour history the volume baseline is drawn from.
   alert_baseline_days: 7,
-  # Don't re-alert the same platform inside this period.
-  alert_cooldown_ms: :timer.hours(1),
   # Remote access over SSH is opt-in; see SMM_SSH_ENABLED in the README.
   ssh_enabled: false,
   # Unprivileged by default, so the app never needs root to bind.
@@ -92,18 +90,6 @@ config :smm_monitor, SmmMonitor.Fetchers.YouTube,
   daily_quota_budget: 8_000,
   # Only consider videos published within this window.
   published_within_ms: :timer.hours(24)
-
-# Spike thresholds. See SmmMonitor.Alerts.Detector for what each guards
-# against.
-config :smm_monitor, :alerts,
-  # Negatives must be this many times the baseline...
-  ratio: 3.0,
-  # ...and at least this many in absolute terms...
-  floor: 5,
-  # ...and we must have watched this long to know what normal is.
-  warmup_ms: :timer.hours(24),
-  # Above this multiple it is critical rather than a warning.
-  critical_ratio: 6.0
 
 config :smm_monitor, ecto_repos: [SmmMonitor.Repo]
 
