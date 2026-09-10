@@ -69,6 +69,7 @@ defmodule SmmMonitor.TUI.Renderers.Common do
         view(top_bar: top_bar(model), bottom_bar: bottom_bar(model)) do
           row do
             column(size: 12) do
+              alert_banner(model)
               tab_bar(model)
               config_panel(model)
             end
@@ -80,6 +81,7 @@ defmodule SmmMonitor.TUI.Renderers.Common do
         view(top_bar: top_bar(model), bottom_bar: bottom_bar(model)) do
           row do
             column(size: 12) do
+              alert_banner(model)
               tab_bar(model)
               summary(model)
               mentions_table(model)
@@ -87,6 +89,30 @@ defmodule SmmMonitor.TUI.Renderers.Common do
           end
         end
       end
+
+      # Only drawn when something is actually wrong: a permanent "all
+      # clear" strip would train people to ignore the space it occupies.
+      defp alert_banner(model) do
+        case Model.active_alert(model) do
+          nil ->
+            label(content: "")
+
+          alert ->
+            panel(height: 3, padding: 0, color: alert_colour(alert)) do
+              label do
+                text(content: "  ", color: alert_colour(alert))
+                text(content: alert_label(alert), color: alert_colour(alert), attributes: @bold)
+                text(content: "  " <> SmmMonitor.Alerts.Alert.message(alert), color: @neutral)
+              end
+            end
+        end
+      end
+
+      defp alert_label(%{severity: :critical}), do: "!! NEGATIVE SPIKE"
+      defp alert_label(_alert), do: "!  NEGATIVE SPIKE"
+
+      defp alert_colour(%{severity: :critical}), do: @negative
+      defp alert_colour(_alert), do: @accent
 
       # --- chrome ---------------------------------------------------------------
 
