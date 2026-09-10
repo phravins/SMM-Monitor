@@ -22,7 +22,8 @@ defmodule SmmMonitor.TUI.ModelTest do
       model = Model.new()
 
       assert model.tab == :all
-      assert model.tabs == [:all | SmmMonitor.platforms()]
+      # Config sits at the end, after the platform tabs.
+      assert model.tabs == [:all | SmmMonitor.platforms()] ++ [:config]
       assert model.offset == 0
     end
 

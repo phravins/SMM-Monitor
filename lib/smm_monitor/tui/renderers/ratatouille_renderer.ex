@@ -38,7 +38,13 @@ defmodule SmmMonitor.TUI.Renderers.RatatouilleRenderer do
     key(:arrow_down) => {:key, :arrow_down},
     key(:pgup) => {:key, :page_up},
     key(:pgdn) => {:key, :page_down},
-    key(:home) => {:key, :home}
+    key(:home) => {:key, :home},
+    # Needed by the config screen's text input.
+    key(:enter) => {:key, :enter},
+    key(:esc) => {:key, :escape},
+    key(:backspace) => {:key, :backspace},
+    key(:backspace2) => {:key, :backspace},
+    key(:space) => {:char, ?\s}
   }
 
   @positive color(:green)
@@ -50,6 +56,17 @@ defmodule SmmMonitor.TUI.Renderers.RatatouilleRenderer do
   @bold [attribute(:bold)]
 
   @impl true
+  def render(%Model{tab: :config} = model) do
+    view(top_bar: top_bar(model), bottom_bar: bottom_bar(model)) do
+      row do
+        column(size: 12) do
+          tab_bar(model)
+          config_panel(model)
+        end
+      end
+    end
+  end
+
   def render(%Model{} = model) do
     view(top_bar: top_bar(model), bottom_bar: bottom_bar(model)) do
       row do
@@ -94,6 +111,34 @@ defmodule SmmMonitor.TUI.Renderers.RatatouilleRenderer do
     end
   end
 
+  defp bottom_bar(%Model{editing: field}) when not is_nil(field) do
+    bar do
+      label do
+        text(content: " editing #{Model.label(field)} — ", color: @accent, attributes: @bold)
+        text(content: "Enter", color: @accent, attributes: @bold)
+        text(content: " save · ")
+        text(content: "Esc", color: @accent, attributes: @bold)
+        text(content: " cancel · separate multiple values with commas")
+      end
+    end
+  end
+
+  defp bottom_bar(%Model{tab: :config} = model) do
+    bar do
+      label do
+        text(content: " j/k", color: @accent, attributes: @bold)
+        text(content: " select field · ")
+        text(content: "e", color: @accent, attributes: @bold)
+        text(content: "dit · ")
+        text(content: "a", color: @accent, attributes: @bold)
+        text(content: " back to mentions · ")
+        text(content: "q", color: @accent, attributes: @bold)
+        text(content: " quit · ")
+        text(content: worker_summary(model), color: @muted)
+      end
+    end
+  end
+
   defp bottom_bar(model) do
     bar do
       label do
@@ -107,6 +152,8 @@ defmodule SmmMonitor.TUI.Renderers.RatatouilleRenderer do
         text(content: "eddit ")
         text(content: "y", color: @accent, attributes: @bold)
         text(content: "outube · ")
+        text(content: "c", color: @accent, attributes: @bold)
+        text(content: "onfig · ")
         text(content: "j/k", color: @accent, attributes: @bold)
         text(content: " scroll · ")
         text(content: "q", color: @accent, attributes: @bold)
@@ -162,6 +209,110 @@ defmodule SmmMonitor.TUI.Renderers.RatatouilleRenderer do
       end
     end
   end
+
+  # --- config screen --------------------------------------------------------
+
+  defp config_panel(model) do
+    panel(title: "config · edit and fetchers pick it up next poll", height: :fill, padding: 0) do
+      label(content: "")
+
+      Enum.map(Model.config_fields(), &config_field(model, &1))
+
+      label(content: "")
+
+      label do
+        text(content: "  PLATFORM MODE", color: @muted, attributes: @bold)
+      end
+
+      Enum.map(model.statuses, &platform_status_row/1)
+
+      label(content: "")
+
+      label do
+        text(
+          content: "  mock/live is set by environment variables and needs a restart",
+          color: @muted
+        )
+      end
+
+      label(content: "")
+      config_footer(model)
+    end
+  end
+
+  # The selected row is marked with a caret and bold text, so the selection
+  # is visible on a terminal without colour too.
+  defp config_field(model, field) do
+    selected? = model.selected_field == field
+    editing? = model.editing == field
+
+    label do
+      text(
+        content:
+          "  #{if selected?, do: "›", else: " "} #{String.pad_trailing(Model.label(field), 14)}",
+        color: if(selected?, do: @accent, else: @muted),
+        attributes: if(selected?, do: @bold, else: [])
+      )
+
+      if editing? do
+        # A list, not two statements: an `if` block returns only its last
+        # expression, which would render the cursor and drop the text.
+        # The block cursor is drawn by hand — termbox's own cursor isn't
+        # positioned for us here.
+        [
+          text(content: model.buffer, attributes: @bold),
+          text(content: "█", color: @accent)
+        ]
+      else
+        text(content: field_display(model, field))
+      end
+    end
+  end
+
+  defp field_display(model, field) do
+    case Model.field_value(model, field) do
+      "" -> "(none — searching everywhere)"
+      value -> value
+    end
+  end
+
+  defp platform_status_row(status) do
+    label do
+      text(content: "    #{String.pad_trailing(to_string(status.platform), 14)}", color: @muted)
+      text(content: worker_state(status), color: mode_colour(status))
+    end
+  end
+
+  defp mode_colour(%{mode: :live}), do: @positive
+  defp mode_colour(%{mode: :down}), do: @negative
+  defp mode_colour(_status), do: @accent
+
+  defp config_footer(model) do
+    label do
+      case model.flash do
+        {:ok, message} ->
+          text(content: "  ✓ #{message}", color: @positive)
+
+        {:error, message} ->
+          text(content: "  ✗ #{message}", color: @negative)
+
+        {:info, message} ->
+          text(content: "  #{message}", color: @muted)
+
+        nil ->
+          text(
+            content: "  saved to #{model.config_path || "(unknown)"} #{source_note(model)}",
+            color: @muted
+          )
+      end
+    end
+  end
+
+  defp source_note(%Model{config_source: {:corrupt, _reason}}),
+    do: "· previous file was unreadable and has been kept as .corrupt"
+
+  defp source_note(%Model{config_source: :defaults}), do: "· not written yet, showing defaults"
+  defp source_note(_model), do: ""
 
   defp mentions_table(model) do
     panel(title: mentions_title(model), height: :fill, padding: 0) do

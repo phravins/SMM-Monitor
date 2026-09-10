@@ -3,6 +3,7 @@ defmodule SmmMonitor.Application do
   Top of the supervision tree.
 
       SmmMonitor.Supervisor            (one_for_one)
+      ├── SmmMonitor.Config                  — runtime-editable settings
       ├── SmmMonitor.Processing.Processor    — ETS owner + aggregation
       ├── SmmMonitor.Fetchers.Supervisor     — one child supervisor per platform
       │   ├── PlatformSupervisor(:reddit)    — Worker(:reddit)
@@ -10,8 +11,9 @@ defmodule SmmMonitor.Application do
       │   └── ...
       └── Ratatouille.Runtime.Supervisor     — only when the TUI is enabled
 
-  Order matters: the processor starts first because it owns the ETS table
-  the fetchers write into. The strategy is `:one_for_one` — a crashing
+  Order matters: `Config` starts first because the fetchers read their
+  search terms from it, and the processor before the fetchers because it
+  owns the ETS table they write into. The strategy is `:one_for_one` — a crashing
   platform supervisor is restarted on its own and never restarts the
   processor (which would drop every stored mention).
   """
@@ -21,7 +23,7 @@ defmodule SmmMonitor.Application do
   @impl true
   def start(_type, _args) do
     children =
-      [SmmMonitor.Processing.Processor] ++
+      [SmmMonitor.Config, SmmMonitor.Processing.Processor] ++
         fetcher_children() ++
         tui_children()
 
