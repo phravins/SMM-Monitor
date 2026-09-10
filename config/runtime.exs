@@ -84,23 +84,18 @@ config :smm_monitor, db_retention_days: RC.integer("SMM_RETENTION_DAYS", 30)
 
 config :smm_monitor, history_limit: RC.integer("SMM_HISTORY_LIMIT", 200)
 
-# Alerting on spikes in negative sentiment.
+# Alerting. The *thresholds* are per client and edited from the clients
+# screen — there is deliberately no env var for them, since a single
+# global threshold is the thing this replaced. What is left here is the
+# on/off switch, the shared Slack webhook, and how far back the volume
+# baseline looks.
 config :smm_monitor,
   alerts_enabled: RC.bool("SMM_ALERTS_ENABLED", true),
-  alert_window_ms: RC.integer("SMM_ALERT_WINDOW_MS", 3_600_000),
-  alert_baseline_days: RC.integer("SMM_ALERT_BASELINE_DAYS", 7),
-  alert_cooldown_ms: RC.integer("SMM_ALERT_COOLDOWN_MS", 3_600_000)
+  alert_baseline_days: RC.integer("SMM_ALERT_BASELINE_DAYS", 7)
 
 if webhook = System.get_env("SMM_ALERT_WEBHOOK_URL") do
   config :smm_monitor, alert_webhook_url: webhook
 end
-
-# Thresholds, for tuning without a code change.
-config :smm_monitor, :alerts,
-  ratio: RC.float("SMM_ALERT_RATIO", 3.0),
-  floor: RC.integer("SMM_ALERT_FLOOR", 5),
-  warmup_ms: RC.integer("SMM_ALERT_WARMUP_MS", 86_400_000),
-  critical_ratio: RC.float("SMM_ALERT_CRITICAL_RATIO", 6.0)
 
 # Remote dashboard access over SSH. Off unless explicitly enabled.
 config :smm_monitor,

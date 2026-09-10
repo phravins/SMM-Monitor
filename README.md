@@ -169,6 +169,14 @@ Instagram.
 | **name** | What you see in the header. Renaming keeps the client's id, so its history is untouched. |
 | **brand terms** | The search terms for this client, used by every platform. Comma-separated; multi-word terms are quoted as phrases automatically. At least one is required. |
 | **subreddits** | Which subreddits Reddit watches **for this client**. Comma-separated. Empty means all of Reddit. |
+| **alert phrases** | Words that raise an alert on sight — `lawsuit, refund, scam`. Empty by default. |
+| **alert if sentiment** | The mean sentiment at or below which this client alerts. |
+| **alert if volume** | The multiple of this client's normal hourly volume that alerts. |
+| **slack webhook** | This client's own Slack channel, overriding the global one. |
+
+The last four are covered in [Alerting](#alerting). Only the client your
+cursor is on shows its fields; the rest collapse to a line, since seven
+rows times five clients is a screen nobody can read.
 
 ### Pausing vs. removing
 
@@ -235,6 +243,7 @@ you're ready.
 | --- | --- |
 | Clients: add, remove, pause | **Clients screen, live** |
 | Brand terms, subreddits, name | **Clients screen, live** |
+| Alert thresholds, phrases, client webhook | **Clients screen, live** |
 | Mock/live per platform (`SMM_MOCK_*`) | Env var + restart |
 | API credentials (`REDDIT_*`, `YOUTUBE_API_KEY`, …) | Env var + restart |
 | Poll intervals, quota budget, window/retention | Env var + restart |
@@ -461,112 +470,211 @@ first despite the smaller number — which is what pulls the mention down
 to neutral rather than leaving it as praise.
 ```
 
-## Alerting on negative spikes
+## Alerting
 
 Collecting mentions only helps if someone notices when they turn. Every
-minute, **each client's** recent negative mentions on each platform are
-compared against *that client's own normal* for that platform, drawn from
-stored history, and an alert is raised when the two diverge far enough.
-
-Per client, not per platform alone: one client having a bad afternoon
-averaged against four quiet ones is a number nobody can act on, and the
-first thing anyone asks about an alert is whose brand it concerns. So
-alerts carry the client, cooldowns are keyed per client and platform —
-one client's spike never silences another's — and the dashboard shows
-only the selected client's alerts.
-
-When one fires, it appears as a banner across the top of the dashboard —
-amber for a warning, red for critical:
+minute each active client is measured over its own rolling window and put
+to three conditions. Any that trips raises an alert; when it stops
+tripping, an all-clear follows.
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  !! NEGATIVE SPIKE  Acme Corp / reddit: 27 negative mentions in the last 1h  │
-│                     (normally about 1.2) — 23.0x above baseline             │
-└──────────────────────────────────────────────────────────────────────────────┘
+:rotating_light: Acme Corp: sentiment fell to -0.62 over 34 mentions in the last 1h (threshold -0.30)
+:rotating_light: Acme Corp: "refund" mentioned 4 times in the last 1h — "third ticket about a refund, still nothing"
+:white_check_mark: Acme Corp: sentiment recovered to 0.12 (lasted 47 min)
 ```
 
-...and goes to every configured channel: the log always, and a webhook if
-you've set one up.
+### The three conditions
 
-### Why a baseline, not a threshold
+They answer different questions on purpose. A brand can have terrible
+sentiment at a perfectly ordinary volume, a huge volume spike at neutral
+sentiment, or one quiet post containing "lawsuit" that matters more than
+either.
 
-"Alert at 10 negative mentions an hour" is wrong for every client at
-once. One with five mentions a day would never trip it; one with five
-thousand would trip it permanently. So the comparison is always against
-what that platform normally does.
-
-A spike has to clear **three** guards, and each stops a specific kind of
-false alarm:
-
-| Guard | Default | Stops |
+| Condition | Asks | Trips when |
 | --- | --- | --- |
-| **Ratio** | 3x baseline | The actual signal — a normal busy afternoon isn't an emergency |
-| **Floor** | 5 mentions | Going from 0.2 to 2 negatives is an "infinite spike". You should not be woken for two grumpy posts. |
-| **Warm-up** | 24h of history | You can't detect an anomaly without a normal. Without this, every fresh install's first hour looks like a crisis. |
+| **Sentiment** | *Are people unhappy?* — absolute | The mean sentiment over the window is at or below the threshold |
+| **Volume** | *Is this louder than normal for this client?* — relative | Mentions reach a multiple of that client's own usual level **for this hour** |
+| **Watch phrases** | *Did anyone say the word?* — literal | A mention contains one of the client's phrases, case-insensitively |
 
-Above 6x it's **critical** rather than a warning.
+Each has a guard against firing on small numbers, because all three are
+embarrassing without one: sentiment needs a minimum number of mentions
+to average, volume needs an absolute floor, and volume also needs at
+least two days of history before it claims to know what normal is.
 
-### Slack (or any webhook)
+### Default thresholds
 
-```sh
-SMM_ALERT_WEBHOOK_URL=https://hooks.slack.com/services/T00/B00/xxxx
-```
+A client added from the clients screen alerts sensibly with nothing
+typed:
 
-The payload carries a `text` field that Slack, Discord and most chat
-webhooks render directly, plus the raw numbers for anything generic:
-
-```json
-{
-  "text": ":rotating_light: reddit: 27 negative mentions in the last 1h ...",
-  "severity": "critical",
-  "platform": "reddit",
-  "observed_negative": 27,
-  "observed_total": 41,
-  "baseline_negative": 1.2,
-  "ratio": 23.0,
-  "at": "2026-09-10T09:53:28Z"
-}
-```
-
-Leave it unset and alerts go to the log only — an unconfigured webhook is
-the normal state, not an error.
-
-### You will not be spammed
-
-A spike outlasts one evaluation, so without a cooldown a single bad
-afternoon would post to Slack sixty times an hour. Each platform is
-limited to **one alert an hour** (`SMM_ALERT_COOLDOWN_MS`).
-
-The cooldown clears as soon as that platform drops back below threshold,
-so a genuinely new spike after a recovery alerts immediately rather than
-waiting out the remainder of an old one.
-
-### Tuning
-
-| Variable | Default | Meaning |
+| Setting | Default | Meaning |
 | --- | --- | --- |
-| `SMM_ALERTS_ENABLED` | `true` | Whether alerting runs at all |
-| `SMM_ALERT_WINDOW_MS` | 1h | The window compared against the baseline |
-| `SMM_ALERT_BASELINE_DAYS` | `7` | How much history the baseline is drawn from |
-| `SMM_ALERT_RATIO` | `3.0` | Multiple of baseline that counts as a spike |
-| `SMM_ALERT_FLOOR` | `5` | Minimum negatives before anything can fire |
-| `SMM_ALERT_WARMUP_MS` | 24h | History needed before alerting starts |
-| `SMM_ALERT_CRITICAL_RATIO` | `6.0` | Multiple that counts as critical |
-| `SMM_ALERT_COOLDOWN_MS` | 1h | Minimum gap between alerts for one platform |
-| `SMM_ALERT_WEBHOOK_URL` | — | Where to POST alerts, if anywhere |
+| Window | **1 hour** | Every condition is measured over this rolling window |
+| Sentiment threshold | **-0.30** | Alert when the mean sentiment is at or below this |
+| Minimum mentions | **5** | ...but not until there are this many to average |
+| Volume multiple | **3.0x** | Alert at three times the usual for this hour |
+| Volume floor | **10** | ...but not on fewer than ten mentions |
+| Watch phrases | **empty** | No phrase alerts until you add some |
+| Webhook | **the global one** | Unless this client has its own |
 
-> **A note on accuracy.** Alerts are only as good as the sentiment
-> scoring behind them, which is still a keyword list. It will miss
-> sarcasm and phrasings that aren't in the word lists — "the site is
-> down", for instance, currently scores neutral. Treat an alert as "go
-> and look", not as a measurement.
+**Watch phrases start empty deliberately.** There is no list of words
+that is right for every brand — "refund" is routine for a retailer and
+alarming for a SaaS — so guessing would either cry wolf or say nothing.
+Good starting points: `lawsuit`, `refund`, `scam`, `fraud`, `data
+breach`, `outage`, `cancel my`.
+
+### Setting up Slack
+
+1. Go to <https://api.slack.com/apps> and **Create New App** → *From
+   scratch*. Name it (e.g. "SMM Monitor") and pick your workspace.
+2. In the app's sidebar choose **Incoming Webhooks** and turn the toggle
+   **On**.
+3. Click **Add New Webhook to Workspace**, choose the channel the alerts
+   should land in, and **Allow**.
+4. Copy the webhook URL. It looks like
+   `https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXX`.
+   **Treat it as a secret** — anyone holding it can post to that
+   channel.
+5. Put it in the environment and restart:
+
+   ```bash
+   export SMM_ALERT_WEBHOOK_URL='https://hooks.slack.com/services/T00.../B00.../XXX'
+   ```
+
+   On a deployed box that goes in `/etc/smm-monitor/env` alongside the
+   API credentials.
+
+Test it without waiting for a real incident:
+
+```bash
+curl -X POST -H 'Content-type: application/json' \
+  --data '{"text":"SMM Monitor webhook test"}' \
+  "$SMM_ALERT_WEBHOOK_URL"
+```
+
+If that posts to the channel, alerting will too.
+
+### One channel, or one per client?
+
+**Both, and the per-client one wins.** The global `SMM_ALERT_WEBHOOK_URL`
+covers everything by default; any client can override it from the
+clients screen with a webhook of their own.
+
+That is deliberate, because neither alone works:
+
+* **Global only** puts every client's alerts in one channel — right for
+  a small agency, and unusable the moment a channel is *shared with* a
+  client, since they would see everyone else's incidents.
+* **Per client only** means setting a URL on every client before any
+  alerting works at all, which is a poor first five minutes.
+
+A client with an override sends **only** there, never to both: an alert
+in two channels gets acknowledged in neither.
+
+### Configuring a client's alerts
+
+Press **`c`** for the clients screen and move to the client with `j`/`k`.
+The alert settings are the last four fields — `h`/`l` moves between
+them, `e` edits:
+
+```
+  ▸ 2. Acme Corp  (acme-corp)
+        name                Acme Corp
+        brand terms         acme, acme corp
+        subreddits          saas, startups
+      › alert phrases       lawsuit, refund, scam
+        alert if sentiment  at or below -0.45
+        alert if volume     at or above 3.0x the usual for this hour
+        slack webhook       https://hooks.slack.com/services/T00/B00/acme
+```
+
+Changes are picked up on the next evaluation, within a minute — no
+restart. Leaving the webhook empty falls back to the global one.
+
+Rejections explain themselves: sentiment runs from -1.00 to 1.00 so a
+threshold outside that never changes anything, a volume multiple of 1x
+or less would alert on every ordinary hour, and a webhook URL that isn't
+`https://` is a typo rather than a preference.
+
+### One alert per incident, not one per minute
+
+A condition that stays true is **one problem, not sixty**. Each is
+tracked as an incident: opened the first time it trips, kept quiet while
+it keeps tripping, and closed with an all-clear when it recovers.
+Exactly two messages reach the channel — *started*, and *over, lasted 47
+min*.
+
+That is the difference between a channel people read and one they mute,
+and it is why this isn't a cooldown. A cooldown ("don't repeat for an
+hour") is wrong in both directions: it goes quiet while a problem is
+still running, and says nothing at all when the problem ends.
+
+Clearing uses a **margin** rather than the trigger threshold, so a number
+sitting on the line doesn't alert and resolve alternately for an hour.
+Sentiment has to recover past the threshold by 0.05; volume has to fall
+to 80% of the trigger multiple.
+
+A genuinely new incident after a recovery alerts again immediately —
+recovering is not the same as being silenced.
+
+### Why a baseline, not a fixed number, for volume
+
+"Alert at 20 mentions an hour" is wrong for every client at once. One
+with five mentions a day would never trip it; one with five thousand
+would trip it permanently. So volume is always compared against **that
+client's own recent normal**.
+
+And normal is **the same hour on previous days**, not a flat weekly
+average. Brands have a daily rhythm: a flat average says a Tuesday
+lunchtime and a Sunday night should look alike, so it alerts every
+weekday morning and misses a genuine weekend storm.
+
+The average only counts days that actually had mentions in that hour. A
+client added yesterday has one day of history, not seven, and dividing
+by seven would count days that never happened and turn an ordinary hour
+into a spike.
+
+### A volume spike is not bad news
+
+It says *something is happening*, not *something is wrong* — a product
+launch and a data breach look identical to it. The sentiment condition
+is what separates them, and the volume alert carries the window's
+sentiment so you can tell at a glance which one you're looking at.
+
+### Sentiment alerts inherit the scorer's limits
+
+> ⚠️ Sentiment is a **lexicon scorer**, not a model. It is fooled by
+> sarcasm and by phrasings that aren't in the word lists — see [How
+> sentiment is scored](#how-sentiment-is-scored) and the tuning section
+> there. Treat a sentiment alert as "go and look", not as a measurement.
+
+### Email is not built
+
+Slack only, for now. Email would mean adding Swoosh, an SMTP or API
+provider, a sender identity that survives SPF and DKIM, and a bounce
+story — none of it hard, all of it more surface than a webhook POST, and
+none of it useful if the team already lives in Slack.
+
+If you want it, the seam is `SmmMonitor.Alerts.Notifier`: a module with
+`notify/1` and `configured?/0`, added to `:alert_notifiers`. The Slack
+notifier is 200 lines and an email one would be shorter.
+
+### Turning it off
+
+```bash
+SMM_ALERTS_ENABLED=false      # the whole engine
+```
+
+Or per client, from the clients screen — a paused client isn't
+evaluated at all, and a client can have alerting switched off while
+still being monitored.
 
 ### Failure policy
 
 Alerting is the last thing that should be allowed to break collection.
 A failing notifier is logged and the others still run; a database that
 can't answer means no baseline, which reads as "still warming up" rather
-than as a reason to alert.
+than as a reason to alert. The log notifier is always on, so an alert is
+recorded somewhere even when every webhook is down.
 
 ## Remote access over SSH
 
@@ -1218,6 +1326,9 @@ source failed counts as an error.
 | `SMM_RETENTION_DAYS` | How long mentions are kept on disk (default 30) |
 | `SMM_HISTORY_LIMIT` | Mentions per platform restored on boot (default 200) |
 | `SMM_SENTIMENT_DIR` | Directory of word lists that override the packaged ones |
+| `SMM_ALERT_WEBHOOK_URL` | Global Slack incoming webhook for alerts |
+| `SMM_ALERTS_ENABLED` | Set `false` to switch the alert engine off entirely |
+| `SMM_ALERT_BASELINE_DAYS` | Days of same-hour history behind the volume baseline (default 7) |
 | `SMM_POLL_INTERVAL_MS` | Poll interval per platform (default 30000) |
 | `SMM_REDDIT_SUBREDDITS` | Comma-separated subreddits to watch. Empty searches all of Reddit. |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` | Reddit **(live)** |
@@ -1271,7 +1382,7 @@ SmmMonitor.Supervisor                    (one_for_one)
 ├── SmmMonitor.Persistence.Retention     daily prune
 ├── SmmMonitor.Clients                   the clients being monitored
 ├── SmmMonitor.Processing.Processor      ETS owner, scoring, aggregation
-├── SmmMonitor.Alerts                    negative-sentiment spike detection
+├── SmmMonitor.Alerts                    sentiment, volume and phrase alerting
 ├── SmmMonitor.SSH.Server                remote dashboard, when enabled
 ├── SmmMonitor.Fetchers.Supervisor       (one_for_one)
 │   ├── PlatformSupervisor(:reddit)    → Worker(:reddit)
@@ -1481,9 +1592,9 @@ Compile-time defaults live in `config/config.exs`:
 | `:history_limit` | `200` | Mentions per platform restored on boot |
 | `:sentiment` | see above | Scoring weights, bands and windows |
 | `:sentiment_dir` | unset | Directory of overriding word lists |
-| `:alerts_enabled` | `true` | Whether spike detection runs |
-| `:alerts` | see above | Ratio, floor, warm-up and critical thresholds |
-| `:alert_notifiers` | log + webhook | Channels an alert is sent to |
+| `:alerts_enabled` | `true` | Whether the alert engine runs |
+| `:alert_baseline_days` | `7` | Days of same-hour history behind the volume baseline |
+| `:alert_notifiers` | log + Slack | Channels an alert is sent to |
 | `:ssh_enabled` | `false` | Whether the SSH server starts |
 | `:ssh_port` | `2222` | Port the SSH server listens on |
 | `:start_persistence` | `true` | Whether the tree starts the repo and migrator |
@@ -1577,7 +1688,14 @@ Reddit subreddit list is its own.
   connection — run it behind a VPN or firewall rather than exposed.
 * Remote sessions are read-only; there's no per-user permission model,
   only "host terminal" versus "everyone else".
-* Alerts fire on negative-sentiment spikes only — not on volume spikes,
-  keyword matches, or a named competitor appearing.
-* Alerts live in memory, so a restart forgets recent ones and clears any
-  cooldown in force.
+* **Email alerting is not built** — Slack (or any webhook) only. The
+  notifier behaviour is the seam if you want to add it.
+* Alerts and their incidents live in memory, so a restart forgets what
+  was firing. A condition still true at the next evaluation opens a new
+  incident and alerts once more; one that recovered while the app was
+  down never sends its all-clear.
+* Watch phrases are plain substrings, so "scam" matches "scamper". A
+  word-boundary match would fix that and break "refund"/"refunds"; v1
+  takes the false positive over the false negative.
+* Sentiment alerts inherit the lexicon scorer's blind spots — sarcasm
+  especially.
