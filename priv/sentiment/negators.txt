@@ -1,0 +1,42 @@
+# Flip the polarity of a sentiment word appearing shortly after.
+# Contractions are listed with and without the apostrophe, since people
+# type both.
+not
+no
+never
+none
+nothing
+nobody
+cannot
+cant
+can't
+dont
+don't
+doesnt
+doesn't
+didnt
+didn't
+wont
+won't
+wouldnt
+wouldn't
+isnt
+isn't
+arent
+aren't
+wasnt
+wasn't
+werent
+weren't
+havent
+haven't
+hasnt
+hasn't
+hardly
+barely
+scarcely
+rarely
+seldom
+without
+lacks
+lack

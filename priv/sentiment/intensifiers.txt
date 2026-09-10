@@ -1,0 +1,24 @@
+# Strengthen a nearby sentiment word. Multiplier 1.5.
+very
+extremely
+incredibly
+really
+super
+so
+totally
+absolutely
+completely
+utterly
+thoroughly
+highly
+deeply
+genuinely
+seriously
+particularly
+especially
+remarkably
+exceptionally
+insanely
+ridiculously
+massively
+hugely
