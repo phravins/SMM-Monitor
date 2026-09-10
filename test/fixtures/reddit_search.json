@@ -1,0 +1,132 @@
+{
+  "kind": "Listing",
+  "data": {
+    "after": "t3_1a2b3c",
+    "dist": 5,
+    "modhash": null,
+    "geo_filter": "",
+    "before": null,
+    "children": [
+      {
+        "kind": "t3",
+        "data": {
+          "subreddit": "smallbusiness",
+          "selftext": "We moved our client reporting onto RealOffice about six months ago and it has been excellent. Support actually replies. Happy to answer questions if anyone is evaluating it.",
+          "author_fullname": "t2_9k2h1",
+          "title": "RealOffice six months in — worth it for a small agency",
+          "subreddit_name_prefixed": "r/smallbusiness",
+          "hidden": false,
+          "ups": 47,
+          "score": 47,
+          "created": 1760227200.0,
+          "domain": "self.smallbusiness",
+          "over_18": false,
+          "id": "1a2b3c",
+          "author": "agency_amy",
+          "num_comments": 12,
+          "permalink": "/r/smallbusiness/comments/1a2b3c/realoffice_six_months_in_worth_it_for_a_small/",
+          "url": "https://www.reddit.com/r/smallbusiness/comments/1a2b3c/realoffice_six_months_in_worth_it_for_a_small/",
+          "created_utc": 1760227200.0,
+          "is_self": true,
+          "stickied": false
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "subreddit": "marketing",
+          "selftext": "",
+          "author_fullname": "t2_4d8s2",
+          "title": "Anyone else seeing real office scheduling tools converge on the same feature set?",
+          "subreddit_name_prefixed": "r/marketing",
+          "hidden": false,
+          "ups": 8,
+          "score": 8,
+          "created": 1760223600.0,
+          "domain": "martechtoday.example",
+          "over_18": false,
+          "id": "1a2b3d",
+          "author": "growth_gina",
+          "num_comments": 3,
+          "permalink": "/r/marketing/comments/1a2b3d/anyone_else_seeing_real_office_scheduling_tools/",
+          "url": "https://martechtoday.example/convergence",
+          "created_utc": 1760223600.0,
+          "is_self": false,
+          "stickied": false
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "subreddit": "socialmedia",
+          "selftext": "Third outage this month. Our whole scheduling queue was stuck for four hours and support has not responded. Genuinely considering cancelling our RealOffice plan.",
+          "author_fullname": null,
+          "title": "RealOffice was down again this morning",
+          "subreddit_name_prefixed": "r/socialmedia",
+          "hidden": false,
+          "ups": 129,
+          "score": 129,
+          "created": 1760216400.0,
+          "domain": "self.socialmedia",
+          "over_18": false,
+          "id": "1a2b3e",
+          "author": "[deleted]",
+          "num_comments": 64,
+          "permalink": "/r/socialmedia/comments/1a2b3e/realoffice_was_down_again_this_morning/",
+          "url": "https://www.reddit.com/r/socialmedia/comments/1a2b3e/realoffice_was_down_again_this_morning/",
+          "created_utc": 1760216400.0,
+          "is_self": true,
+          "stickied": false
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "subreddit": "Entrepreneur",
+          "selftext": "Long writeup below. I compared four tools over a month for a client rollout. RealOffice came out ahead on reporting but the mobile app kept crashing on Android 14. Full notes, pricing, and screenshots follow. I have tried to keep this neutral because every one of these tools has a rough edge somewhere, and what matters is which rough edge you can live with for the kind of client work you actually do day to day, which for us is mostly scheduled publishing plus monthly reporting for retainer clients who want a PDF they can forward to their own boss without us having to redo it by hand every single month in a spreadsheet.",
+          "author_fullname": "t2_77xk9",
+          "title": "Tool comparison writeup",
+          "subreddit_name_prefixed": "r/Entrepreneur",
+          "hidden": false,
+          "ups": 22,
+          "score": 22,
+          "created": 1760209200.0,
+          "domain": "self.Entrepreneur",
+          "over_18": false,
+          "id": "1a2b3f",
+          "author": "ops_owen",
+          "num_comments": 9,
+          "permalink": "/r/Entrepreneur/comments/1a2b3f/tool_comparison_writeup/",
+          "url": "https://www.reddit.com/r/Entrepreneur/comments/1a2b3f/tool_comparison_writeup/",
+          "created_utc": 1760209200.0,
+          "is_self": true,
+          "stickied": false
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "subreddit": "smallbusiness",
+          "selftext": "",
+          "author_fullname": "t2_1p0q3",
+          "title": "Posted a walkthrough of our RealOffice setup",
+          "subreddit_name_prefixed": "r/smallbusiness",
+          "hidden": false,
+          "ups": 4,
+          "score": 4,
+          "created": 1760202000.0,
+          "domain": "youtube.com",
+          "over_18": false,
+          "id": "1a2b3g",
+          "author": "marketing_mike",
+          "num_comments": 0,
+          "permalink": "/r/smallbusiness/comments/1a2b3g/posted_a_walkthrough_of_our_realoffice_setup/",
+          "url": "https://youtube.com/watch?v=example",
+          "created_utc": 1760202000.0,
+          "is_self": false,
+          "stickied": false
+        }
+      }
+    ]
+  }
+}
