@@ -220,12 +220,27 @@ defmodule SmmMonitor.Client.AlertConfig do
       nil
   """
   @spec matching_phrase(t(), String.t() | nil) :: String.t() | nil
-  def matching_phrase(%__MODULE__{watch_phrases: []}, _text), do: nil
-  def matching_phrase(%__MODULE__{}, nil), do: nil
+  def matching_phrase(config, text), do: config |> matching_phrases(text) |> List.first()
 
-  def matching_phrase(%__MODULE__{watch_phrases: phrases}, text) do
+  @doc """
+  Every watch phrase present in the text, not just the first.
+
+  A mention saying *"no refund so I'm considering a lawsuit"* contains
+  two problems, and whichever happened to be listed first should not
+  hide the other.
+
+      iex> alias SmmMonitor.Client.AlertConfig
+      iex> config = AlertConfig.new(%{watch_phrases: ["lawsuit", "refund"]})
+      iex> AlertConfig.matching_phrases(config, "no refund, considering a lawsuit")
+      ["lawsuit", "refund"]
+  """
+  @spec matching_phrases(t(), String.t() | nil) :: [String.t()]
+  def matching_phrases(%__MODULE__{watch_phrases: []}, _text), do: []
+  def matching_phrases(%__MODULE__{}, nil), do: []
+
+  def matching_phrases(%__MODULE__{watch_phrases: phrases}, text) do
     downcased = String.downcase(text)
-    Enum.find(phrases, &String.contains?(downcased, &1))
+    Enum.filter(phrases, &String.contains?(downcased, &1))
   end
 
   # --- internals ------------------------------------------------------------
