@@ -65,9 +65,27 @@ defmodule SmmMonitor.PersistenceTest do
     test "keeps the sentiment the processing layer scored" do
       # Stored as scored, never recomputed: editing the word lists later
       # must not silently rewrite history.
-      Persistence.store([mention(id: "s", sentiment: :negative, sentiment_score: -4)])
+      Persistence.store([
+        mention(id: "s", sentiment: :negative, sentiment_value: -0.75, sentiment_score: -4)
+      ])
 
-      assert [%Mention{sentiment: :negative, sentiment_score: -4}] = Persistence.recent(:reddit, 10)
+      assert [%Mention{} = stored] = Persistence.recent(:reddit, 10)
+      assert stored.sentiment == :negative
+      assert stored.sentiment_value == -0.75
+      assert stored.sentiment_score == -4
+    end
+
+    test "gives rows stored before scoring was numeric a value from their label" do
+      # Rows written by an earlier version have no sentiment_value. They
+      # must still sort and average sensibly rather than reading as
+      # neutral, and rescoring them would rewrite what they meant.
+      Persistence.store([mention(id: "old", sentiment: :negative, sentiment_score: -4)])
+
+      SmmMonitor.Repo.update_all(SmmMonitor.Persistence.MentionRecord, set: [sentiment_value: nil])
+
+      assert [%Mention{} = restored] = Persistence.recent(:reddit, 10)
+      assert restored.sentiment == :negative
+      assert restored.sentiment_value < 0
     end
 
     test "handles timestamps that aren't microsecond precision" do

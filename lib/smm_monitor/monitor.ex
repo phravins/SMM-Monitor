@@ -19,7 +19,11 @@ defmodule SmmMonitor.Monitor do
           positive: non_neg_integer(),
           neutral: non_neg_integer(),
           negative: non_neg_integer(),
+          # Sum of the raw lexicon scores, kept for continuity.
           score: integer(),
+          # Sum of the normalised -1.0..1.0 scores, and their mean.
+          value: float(),
+          average: float(),
           window_ms: window()
         }
 
@@ -42,18 +46,30 @@ defmodule SmmMonitor.Monitor do
     window = window || SmmMonitor.config(:window_ms, :timer.hours(24))
     mentions = Store.all(table(), platform, since(window))
 
+    empty = %{positive: 0, neutral: 0, negative: 0, score: 0, value: 0.0}
+
     tally =
-      Enum.reduce(mentions, %{positive: 0, neutral: 0, negative: 0, score: 0}, fn mention, acc ->
+      Enum.reduce(mentions, empty, fn mention, acc ->
         acc
         |> Map.update!(mention.sentiment, &(&1 + 1))
         |> Map.update!(:score, &(&1 + mention.sentiment_score))
+        |> Map.update!(:value, &(&1 + mention.sentiment_value))
       end)
+
+    count = length(mentions)
 
     tally
     |> Map.put(:platform, platform)
-    |> Map.put(:count, length(mentions))
+    |> Map.put(:count, count)
+    |> Map.put(:average, average(tally.value, count))
     |> Map.put(:window_ms, window)
   end
+
+  # The mean normalised score, which is what the dashboard reports. A sum
+  # would grow with volume and say nothing about how people feel; the mean
+  # stays comparable between a quiet platform and a busy one.
+  defp average(_value, 0), do: 0.0
+  defp average(value, count), do: Float.round(value / count, 2)
 
   @doc """
   Mention counts per platform over a window, for the tab bar.

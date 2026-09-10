@@ -54,6 +54,8 @@ defmodule SmmMonitor.TUI.Renderers.Common do
       alias SmmMonitor.TUI.Model
 
       @bar_width 30
+      # Odd, so the gauge has a true centre column for the zero marker.
+      @gauge_width 25
       @text_width 68
 
       @positive color(:green)
@@ -205,17 +207,41 @@ defmodule SmmMonitor.TUI.Renderers.Common do
         stats = model.stats
         percentages = Model.sentiment_percentages(model)
         {positive_cols, neutral_cols, negative_cols} = Model.sentiment_bar(model, @bar_width)
+        average = Model.average_sentiment(model)
+
+        {gauge_left_pad, gauge_negative, gauge_positive, gauge_right_pad} =
+          Model.sentiment_gauge(model, @gauge_width)
 
         panel(
           title: "last #{window_label(model.window_ms)} · #{model.tab}",
-          height: 5,
+          height: 6,
           padding: 0
         ) do
           label do
             text(content: "mentions: ", color: @muted)
             text(content: "#{stats.count}", attributes: @bold)
-            text(content: "   net sentiment: ", color: @muted)
-            text(content: signed(stats.score), color: score_color(stats.score), attributes: @bold)
+            text(content: "   avg sentiment: ", color: @muted)
+
+            text(
+              content: signed(average),
+              color: sentiment_color(Model.average_label(model)),
+              attributes: @bold
+            )
+
+            text(content: " #{Model.average_label(model)}", color: @muted)
+          end
+
+          # The mean score as a meter that grows out from a fixed centre,
+          # so which side is lit answers "how are people feeling?" before
+          # the number is read at all.
+          label do
+            text(content: "-1 ", color: @muted)
+            text(content: String.duplicate("·", gauge_left_pad), color: @muted)
+            text(content: String.duplicate("█", gauge_negative), color: @negative)
+            text(content: "│", color: @muted)
+            text(content: String.duplicate("█", gauge_positive), color: @positive)
+            text(content: String.duplicate("·", gauge_right_pad), color: @muted)
+            text(content: " +1", color: @muted)
           end
 
           label do
@@ -429,19 +455,26 @@ defmodule SmmMonitor.TUI.Renderers.Common do
       defp sentiment_color(:neutral), do: @neutral
 
       # Direction plus magnitude, rather than a sign glyph next to a signed
-      # number ("- -2" is a lot harder to scan than "▼ 2").
-      defp sentiment_label(%Mention{sentiment: :neutral}), do: "•  0"
-      defp sentiment_label(%Mention{sentiment: :positive, sentiment_score: score}), do: "▲ #{score}"
+      # number ("- -0.5" is a lot harder to scan than "▼ 0.50"). The
+      # magnitude is the normalised score, so a mention's strength can be
+      # compared against the column average directly above it.
+      defp sentiment_label(%Mention{sentiment: :neutral}), do: "•  0.00"
 
-      defp sentiment_label(%Mention{sentiment: :negative, sentiment_score: score}),
-        do: "▼ #{abs(score)}"
+      defp sentiment_label(%Mention{sentiment: :positive, sentiment_value: value}),
+        do: "▲ #{magnitude(value)}"
 
-      defp score_color(score) when score > 0, do: @positive
-      defp score_color(score) when score < 0, do: @negative
-      defp score_color(_score), do: @neutral
+      defp sentiment_label(%Mention{sentiment: :negative, sentiment_value: value}),
+        do: "▼ #{magnitude(value)}"
 
-      defp signed(score) when score > 0, do: "+#{score}"
-      defp signed(score), do: to_string(score)
+      defp magnitude(value), do: value |> abs() |> two_places()
+
+      defp signed(score) when score > 0, do: "+" <> two_places(score)
+      defp signed(score), do: two_places(score)
+
+      defp two_places(score) when is_float(score), do: :erlang.float_to_binary(score, decimals: 2)
+      # Integers reach here from mention rows written before scoring
+      # became numeric.
+      defp two_places(score), do: two_places(score / 1)
 
       defp empty_bar(filled) when filled >= @bar_width, do: ""
       defp empty_bar(filled), do: String.duplicate("·", @bar_width - filled)

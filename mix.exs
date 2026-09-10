@@ -31,7 +31,16 @@ defmodule SmmMonitor.MixProject do
     [
       smm_monitor: [
         include_executables_for: [:unix],
-        applications: [runtime_tools: :permanent]
+        # Bundle the Erlang runtime so the target server needs neither
+        # Elixir nor Erlang installed. The trade is that the release is
+        # tied to the OS and architecture it was built on.
+        include_erts: true,
+        # runtime_tools gives :observer/:recon a foothold if someone ever
+        # needs to attach to a misbehaving instance.
+        applications: [runtime_tools: :permanent],
+        # Strip debug info: smaller release, and nothing on a production
+        # box needs to decompile it.
+        strip_beams: true
       ]
     ]
   end

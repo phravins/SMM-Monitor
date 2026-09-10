@@ -1,0 +1,19 @@
+# Weaken a nearby sentiment word. Multiplier 0.5.
+slightly
+somewhat
+fairly
+rather
+quite
+mildly
+marginally
+moderately
+partially
+kind of
+sort of
+a bit
+a little
+occasionally
+sometimes
+mostly
+generally
+relatively

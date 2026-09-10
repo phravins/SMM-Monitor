@@ -19,9 +19,15 @@ defmodule SmmMonitor.Mention do
     :url,
     # DateTime the mention was published (UTC).
     :timestamp,
-    # :positive | :neutral | :negative — filled in by the processing layer.
+    # :positive | :neutral | :negative — filled in by the processing
+    # layer, derived from sentiment_value.
     sentiment: :neutral,
-    # Signed keyword score behind the sentiment label.
+    # Normalised sentiment, -1.0 (most negative) to 1.0 (most positive).
+    # This is the number to compare and average across mentions.
+    sentiment_value: 0.0,
+    # The raw lexicon total behind that value. Kept because it is what
+    # earlier versions produced and what already-stored rows hold, and
+    # because "how many sentiment words fired" is useful evidence.
     sentiment_score: 0,
     # True when the mention came from fixtures rather than a live API.
     mock: false
@@ -37,6 +43,7 @@ defmodule SmmMonitor.Mention do
           url: String.t() | nil,
           timestamp: DateTime.t(),
           sentiment: sentiment(),
+          sentiment_value: float(),
           sentiment_score: integer(),
           mock: boolean()
         }
@@ -59,6 +66,7 @@ defmodule SmmMonitor.Mention do
       url: attrs[:url],
       timestamp: parse_timestamp(Map.get(attrs, :timestamp)),
       sentiment: Map.get(attrs, :sentiment, :neutral),
+      sentiment_value: Map.get(attrs, :sentiment_value, 0.0),
       sentiment_score: Map.get(attrs, :sentiment_score, 0),
       mock: Map.get(attrs, :mock, false)
     }

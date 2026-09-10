@@ -2,9 +2,9 @@ defmodule SmmMonitor.Persistence.Paths do
   @moduledoc """
   Where the mention database lives.
 
-  Defaults to the per-user data directory —
-  `~/.local/share/smm_monitor/mentions.db`, honouring `XDG_DATA_HOME` —
-  and is overridden by `SMM_DB_PATH`.
+  Defaults to `SmmMonitor.Paths.state_dir/0` — `/var/lib/smm-monitor`
+  under systemd, `~/.local/share/smm_monitor` otherwise — and is
+  overridden by `SMM_DB_PATH`.
 
   Deliberately *not* under the app's `priv` directory, for the same reason
   the runtime config file isn't: `:code.priv_dir/1` resolves to the
@@ -19,14 +19,5 @@ defmodule SmmMonitor.Persistence.Paths do
 
   @doc "The default database path."
   @spec default_database() :: Path.t()
-  def default_database do
-    base =
-      System.get_env("XDG_DATA_HOME") ||
-        case System.user_home() do
-          nil -> ".smm_monitor"
-          home -> Path.join([home, ".local", "share"])
-        end
-
-    Path.join([base, "smm_monitor", @filename])
-  end
+  def default_database, do: SmmMonitor.Paths.state(@filename)
 end

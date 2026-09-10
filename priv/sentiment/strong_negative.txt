@@ -1,0 +1,36 @@
+# Unambiguous complaint. Weight -2.0.
+terrible
+awful
+horrible
+appalling
+atrocious
+abysmal
+unusable
+unacceptable
+useless
+worthless
+garbage
+rubbish
+trash
+disaster
+disastrous
+catastrophe
+hate
+hated
+furious
+outraged
+scam
+fraud
+worst
+broken
+crash
+crashed
+crashes
+crashing
+outage
+down
+downtime
+offline
+unavailable
+data loss
+corrupted

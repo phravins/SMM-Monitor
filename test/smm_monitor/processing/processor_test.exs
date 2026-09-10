@@ -21,8 +21,10 @@ defmodule SmmMonitor.Processing.ProcessorTest do
       # Scoring happens once, on write, so reads stay pure lookups.
       Processor.ingest([attrs(id: "a", text: "absolutely fantastic support")])
 
-      assert [%{sentiment: :positive, sentiment_score: 2}] =
-               Store.recent(Processor.table(), :all)
+      assert [mention] = Store.recent(Processor.table(), :all)
+      assert mention.sentiment == :positive
+      assert mention.sentiment_value > 0
+      assert mention.sentiment_score > 0
     end
 
     test "counts repeat mentions as duplicates without storing them" do

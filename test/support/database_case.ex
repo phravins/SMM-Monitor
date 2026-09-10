@@ -42,6 +42,7 @@ defmodule SmmMonitor.DatabaseCase do
       url: "https://example.test/p",
       timestamp: timestamp(days_ago, minutes_ago),
       sentiment: :neutral,
+      sentiment_value: 0.0,
       sentiment_score: 0
     ]
 
