@@ -25,7 +25,14 @@ config :smm_monitor,
 # Adding a platform is a matter of writing the module and adding a line here.
 config :smm_monitor, :platforms,
   reddit: [module: SmmMonitor.Fetchers.Reddit, enabled: true, opts: []],
-  youtube: [module: SmmMonitor.Fetchers.YouTube, enabled: true, opts: [max_results: 25]],
+  youtube: [
+    module: SmmMonitor.Fetchers.YouTube,
+    enabled: true,
+    # Far slower than the other platforms on purpose: a YouTube search
+    # costs 100 of the 10,000 free daily quota units. See the README.
+    interval_ms: :timer.minutes(5),
+    opts: []
+  ],
   twitter: [module: SmmMonitor.Fetchers.Twitter, enabled: true, opts: []],
   instagram: [module: SmmMonitor.Fetchers.Instagram, enabled: true, opts: []]
 
@@ -39,5 +46,18 @@ config :smm_monitor, SmmMonitor.Fetchers.Reddit,
   sort: "new",
   # How far back the search reaches: hour, day, week, month, year, all.
   time_filter: "week"
+
+# YouTube's free tier is 10,000 quota units a day and a search costs 100,
+# so the real ceiling is 100 searches a day. The budget below stops short
+# of that, leaving room for anything else using the same key.
+config :smm_monitor, SmmMonitor.Fetchers.YouTube,
+  # Results per search. The API caps a page at 50.
+  max_results: 25,
+  # date | relevance | rating | title | viewCount
+  order: "date",
+  # Stop polling once this many units have been spent today.
+  daily_quota_budget: 8_000,
+  # Only consider videos published within this window.
+  published_within_ms: :timer.hours(24)
 
 import_config "#{config_env()}.exs"

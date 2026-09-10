@@ -94,10 +94,10 @@ directory and works.
 
 ## Live data
 
-Everything runs on fixtures until you say otherwise. **Reddit is the one
-platform with a live implementation** — the rest are fixture-backed, so
-turning Reddit on changes one tab and leaves the others exactly as they
-were.
+Everything runs on fixtures until you say otherwise. **Reddit and YouTube
+have live implementations**; Twitter and Instagram are fixture-backed.
+Each platform is switched on independently, so turning one live leaves the
+others exactly as they were.
 
 ### Getting Reddit API credentials
 
@@ -145,9 +145,17 @@ set -a; source .env; set +a
 mix smm.tui
 ```
 
+For YouTube, add:
+
+```sh
+SMM_MOCK_YOUTUBE=false                      # the switch that turns YouTube live
+YOUTUBE_API_KEY=your_api_key
+SMM_YOUTUBE_POLL_INTERVAL_MS=1080000        # 18 min — see the quota section
+```
+
 The status line at the bottom of the dashboard shows each worker's actual
-mode — you should see `reddit:live` alongside `youtube:mock`,
-`twitter:mock` and `instagram:mock`.
+mode — with both live you should see `reddit:live youtube:live
+twitter:mock instagram:mock`.
 
 `.env` is gitignored. Credentials are read in `config/runtime.exs`, which
 runs on every boot (including from a release), so nothing is hardcoded and
@@ -165,15 +173,20 @@ There are two switches. The per-platform one wins:
 | --- | --- |
 | *(nothing set)* | Everything mocked. This is the default. |
 | `SMM_MOCK_REDDIT=false` | Reddit live, everything else mocked. |
+| `SMM_MOCK_YOUTUBE=false` | YouTube live, everything else mocked. |
+| Both of the above | Reddit and YouTube live, Twitter and Instagram mocked. |
 | `SMM_MOCK_REDDIT=true` | Reddit mocked, even with credentials set. |
-| `SMM_MOCK_MODE=false` | Global default flips to live. Only Reddit has a live implementation, so in practice this is the same as the second row. |
+| `SMM_MOCK_MODE=false` | Global default flips to live. Twitter and Instagram have no live implementation, so they stay on fixtures regardless. |
 
-`SMM_MOCK_REDDIT` unset means *"inherit `SMM_MOCK_MODE`"*, not *"go live"* —
-so you can't accidentally start hitting the API by never setting it.
+A per-platform flag unset means *"inherit `SMM_MOCK_MODE`"*, not *"go
+live"* — so you can't accidentally start hitting an API by never setting
+it. The two live platforms are independent: turning YouTube on has no
+effect on Reddit and vice versa.
 
 **A platform without credentials keeps serving mock data** rather than
-failing. Set `SMM_MOCK_REDDIT=false` but forget the client secret and
-you'll get fixtures plus one clear warning in the log:
+failing. Set `SMM_MOCK_REDDIT=false` but forget the client secret (or
+`SMM_MOCK_YOUTUBE=false` with no API key) and you'll get fixtures plus one
+clear warning in the log:
 
 ```
 [warning] reddit is configured for live data but its credentials are
@@ -200,17 +213,128 @@ At the default 30-second poll interval that's 2 requests/minute against a
 response and stops five requests short of the limit, so a burst from
 something else sharing the credentials can't push you into a hard 429.
 
+### Getting a YouTube API key
+
+YouTube Data API v3 uses a plain API key — no OAuth, because the data is
+public.
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and
+   create a project (or pick an existing one).
+2. **Enable the API**: *APIs & Services → Library*, search for
+   **"YouTube Data API v3"**, open it, click **Enable**. This step is easy
+   to skip and the key won't work without it — you'll get a 403 with
+   reason `accessNotConfigured`.
+3. **Create the key**: *APIs & Services → Credentials → Create Credentials
+   → API key*. Copy the key it shows you.
+4. **Restrict it** (optional but worth doing): click the new key → under
+   *API restrictions* choose **Restrict key** and select *YouTube Data API
+   v3*. An unrestricted key that leaks can be used against any Google API
+   enabled on the project.
+
+There is no approval wait and no billing account needed for the free tier.
+
+If the key is wrong or the API isn't enabled, you'll see it in the log
+rather than having to guess:
+
+```
+[warning] youtube fetch failed: {:invalid_api_key, "API key not valid.
+Please pass a valid API key."}
+```
+
+### Quota: the thing that actually constrains YouTube
+
+This is the part worth reading before you set a poll interval.
+
+The free tier is **10,000 quota units per day**, and a `search.list` call
+costs **100 units**. So the real allowance is **100 searches per day** —
+and that is the binding constraint on everything else.
+
+SMM Monitor budgets **8,000 units** (80 searches) by default, leaving 20%
+in reserve for anything else using the same key. Once the budget is spent
+it stops polling until the quota resets and logs why:
+
+```
+[warning] youtube: daily quota budget spent (8000/8000 units used today
+(0 searches left)). Pausing polling for 312 minutes, until the quota
+resets at midnight Pacific.
+```
+
+Work out an interval from the budget:
+
+| Interval | Calls/day | Units/day | Result |
+| --- | --- | --- | --- |
+| 5 min *(default)* | 288 | 28,800 | Budget gone after **~6.7 hours**, dark until the reset |
+| 10 min | 144 | 14,400 | Dark after ~13 hours |
+| 15 min | 96 | 9,600 | Dark after ~20 hours |
+| **18 min** | **80** | **8,000** | **Covers a full day** |
+| 30 min | 48 | 4,800 | Comfortable, half the budget unused |
+
+The 5-minute default gives you a responsive dashboard for a working
+morning and then nothing. **If you want all-day coverage, set 18 minutes
+or slower:**
+
+```sh
+SMM_YOUTUBE_POLL_INTERVAL_MS=1080000   # 18 minutes
+```
+
+The app tells you this at startup if your interval can't sustain a day:
+
+```
+[warning] youtube: polling every 5 min needs 28800 quota units/day but the
+budget is 8000. Coverage will stop after about 6.7h each day. Set
+SMM_YOUTUBE_POLL_INTERVAL_MS to 1080000 (18 min) for full-day coverage.
+```
+
+Two details worth knowing. The quota resets at **midnight Pacific**, not
+UTC or your local midnight — that's Google's boundary, not ours. And
+Google doesn't report remaining quota in response headers, so our count is
+an estimate; it can't see usage from anything else sharing the key. That's
+what the 2,000-unit reserve is for. If Google says the quota is gone
+before our own count does, we believe Google and stand down.
+
+### Why `search.list` and not `commentThreads.list`
+
+`search.list` is the only endpoint that can **discover** a mention.
+
+`commentThreads.list` is far cheaper (1 unit against search's 100) and
+comments are honestly where brand chatter lives. But it can only read
+comments on a video or channel *you already name* — its `searchTerms`
+parameter filters within those. It cannot answer "who mentioned us
+anywhere on YouTube today", which is the question this tool exists to
+answer. Using it alone would mean maintaining a hand-curated list of
+videos to watch, and you'd miss every new one.
+
+So: `search.list` for discovery, bounded to recently published videos via
+`publishedAfter` so each poll only sees what's new.
+
+**The natural next step is a hybrid** — keep `search.list` for discovery,
+then spend 1 unit per discovered video on `commentThreads.list` to pull
+the discussion underneath it. Twenty videos of comments would cost 20
+units against search's 100, so it's cheap. It's a real feature rather than
+a tweak, so it isn't built yet.
+
+### What YouTube gets asked
+
+One `search.list` call per poll, for videos matching the shared
+`SMM_KEYWORDS` terms (joined with YouTube's `|` OR syntax, phrases
+quoted), ordered by date, published within the last 24 hours. The channel
+title becomes the mention's author, the video title and description become
+its text.
+
 ### Environment variables
 
 | Variable | Used by |
 | --- | --- |
 | `SMM_MOCK_MODE` | Global switch; `true` (default) forces fixtures everywhere |
 | `SMM_MOCK_REDDIT` | Per-platform override for Reddit. Unset inherits the global. |
+| `SMM_MOCK_YOUTUBE` | Per-platform override for YouTube. Unset inherits the global. |
 | `SMM_KEYWORDS` | Comma-separated brand terms to search for |
 | `SMM_POLL_INTERVAL_MS` | Poll interval per platform (default 30000) |
 | `SMM_REDDIT_SUBREDDITS` | Comma-separated subreddits to watch. Empty searches all of Reddit. |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` | Reddit **(live)** |
-| `YOUTUBE_API_KEY` | YouTube (mock — see below) |
+| `SMM_YOUTUBE_POLL_INTERVAL_MS` | YouTube's own poll interval (default 300000 = 5 min) |
+| `SMM_YOUTUBE_DAILY_QUOTA_BUDGET` | Units to spend per day before standing down (default 8000) |
+| `YOUTUBE_API_KEY` | YouTube **(live)** |
 | `TWITTER_BEARER_TOKEN` | Twitter/X (stubbed) |
 | `INSTAGRAM_ACCESS_TOKEN` / `INSTAGRAM_USER_ID` | Instagram (stubbed) |
 
@@ -219,7 +343,7 @@ something else sharing the credentials can't push you into a hard 429.
 | Platform | Status |
 | --- | --- |
 | **Reddit** | **Live.** OAuth2 script app, `client_credentials` grant, multireddit `/search` sorted by new. Token cached in the worker and refreshed before expiry; rate limit tracked from Reddit's own headers. Free tier. |
-| **YouTube** | **Mock.** The Data API v3 `search.list` call is written and its mapping is tested, but the platform is left on fixtures for now. Note `search.list` costs 100 quota units per call, so raise `SMM_POLL_INTERVAL_MS` before turning it on. |
+| **YouTube** | **Live.** Data API v3 `search.list` with an API key. Quota tracked against a daily budget in the worker, standing the platform down when spent. Polls on its own slower interval. Free tier. |
 | **Twitter/X** | **Stubbed.** Recent search needs a paid Basic tier; there's no free read tier to develop against. The payload mapping (`Twitter.parse/1`) is written and tested; only the HTTP call is missing. |
 | **Instagram** | **Stubbed.** Needs a Business/Creator account, a linked Facebook Page and app review — and the Graph API only surfaces mentions *of your own account*, not arbitrary brand terms. Mapping written and tested. |
 
@@ -373,6 +497,19 @@ terminal.
   (`test/support/reddit_stub.ex`), which scripts responses per request kind
   so a test can say "401 first, then 200".
 
+* YouTube works the same way: `test/fixtures/youtube_search.json` for
+  parsing and `test/support/youtube_stub.ex` for the fetch path. **No test
+  spends a quota unit.** To capture a fresh payload from your own key:
+
+  ```sh
+  curl -s "https://www.googleapis.com/youtube/v3/search?part=snippet\
+&q=yourbrand&type=video&order=date&maxResults=5&key=$YOUTUBE_API_KEY" \
+    > test/fixtures/youtube_search.json
+  ```
+
+  That costs 100 units. The parse tests assert on specific video ids, so
+  they'll need updating to match whatever you capture.
+
 Tests run with `start_fetchers: false` and `start_tui: false`, so they get
 the processing layer and nothing else: no 30s polls racing assertions.
 
@@ -405,8 +542,22 @@ config :smm_monitor, SmmMonitor.Fetchers.Reddit,
   time_filter: "week" # hour, day, week, month, year, all
 ```
 
-No brand name or subreddit is hardcoded anywhere in `lib/` — the query is
-built from `:keywords` and this list at runtime.
+And YouTube:
+
+```elixir
+config :smm_monitor, SmmMonitor.Fetchers.YouTube,
+  max_results: 25,               # results per search; the API caps a page at 50
+  order: "date",                 # date | relevance | rating | title | viewCount
+  daily_quota_budget: 8_000,     # stop polling once this many units are spent
+  published_within_ms: :timer.hours(24)
+```
+
+A platform may also set its own `:interval_ms` in the `:platforms` config;
+YouTube does, because its quota makes the global 30s cadence unaffordable.
+
+No brand name, subreddit or search term is hardcoded anywhere in `lib/` —
+every query is built from the shared `:keywords` setting and this config at
+runtime. Both live platforms search for the *same* brand terms.
 
 ## Known limitations
 
@@ -423,5 +574,12 @@ built from `:keywords` and this list at runtime.
 * Reddit's search index lags a little behind new posts, so a mention can
   take a few minutes to appear. `time_filter` bounds how far back a poll
   looks; mentions older than that are never seen at all.
-* Only Reddit is live. YouTube's call is written but the platform is left
-  on fixtures; Twitter and Instagram need paid or reviewed API access.
+* YouTube search finds *videos*, not comments — so a brand discussed in
+  the comments under someone else's video won't show up. The hybrid that
+  would fix this is described above.
+* YouTube's default 5-minute poll spends the daily budget in under seven
+  hours. Set `SMM_YOUTUBE_POLL_INTERVAL_MS=1080000` for all-day coverage.
+* YouTube quota accounting is our own estimate — Google doesn't report
+  remaining quota — so it can't see another process sharing the key.
+* Twitter and Instagram are still fixture-backed; both need paid or
+  reviewed API access.

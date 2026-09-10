@@ -63,14 +63,26 @@ config :smm_monitor,
   # `SMM_TUI=1 mix run --no-halt` starts the dashboard from the app itself.
   start_tui: RC.bool("SMM_TUI", false)
 
-# Per-platform overrides of the global mock switch. Reddit is the only
-# platform with a live implementation, so it is the only one worth
-# overriding: `SMM_MOCK_REDDIT=false` puts Reddit on live data while
-# YouTube, Twitter and Instagram stay on fixtures.
+# Per-platform overrides of the global mock switch. Reddit and YouTube
+# have live implementations, so `SMM_MOCK_REDDIT=false` and
+# `SMM_MOCK_YOUTUBE=false` put those on live data while Twitter and
+# Instagram stay on fixtures.
 #
 # Unset (nil) means "inherit SMM_MOCK_MODE", so the out-of-the-box
 # experience is still fully mocked.
-config :smm_monitor, :mock_platforms, reddit: RC.bool_or_nil("SMM_MOCK_REDDIT")
+config :smm_monitor, :mock_platforms,
+  reddit: RC.bool_or_nil("SMM_MOCK_REDDIT"),
+  youtube: RC.bool_or_nil("SMM_MOCK_YOUTUBE")
+
+# YouTube polls on its own schedule because of the API's daily quota.
+# See the README for the arithmetic behind picking a value.
+if interval_ms = System.get_env("SMM_YOUTUBE_POLL_INTERVAL_MS") do
+  config :smm_monitor, :platforms, youtube: [interval_ms: String.to_integer(interval_ms)]
+end
+
+if budget = System.get_env("SMM_YOUTUBE_DAILY_QUOTA_BUDGET") do
+  config :smm_monitor, SmmMonitor.Fetchers.YouTube, daily_quota_budget: String.to_integer(budget)
+end
 
 # Which subreddits the Reddit fetcher watches. Comma-separated; an empty
 # value searches all of Reddit.
