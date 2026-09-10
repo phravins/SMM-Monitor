@@ -151,6 +151,26 @@ if interval_ms = System.get_env("SMM_TWITTER_POLL_INTERVAL_MS") do
   config :smm_monitor, :platforms, twitter: [interval_ms: String.to_integer(interval_ms)]
 end
 
+# Instagram. Which of the three account-scoped sources to poll — the
+# Graph API has no keyword search, so there is nothing broader to enable.
+# See the README for what each one can and cannot see.
+if sources = System.get_env("SMM_INSTAGRAM_SOURCES") do
+  config :smm_monitor, SmmMonitor.Fetchers.Instagram,
+    sources: sources |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
+end
+
+# Hashtags to search, if the :hashtag source is enabled. Defaults to the
+# brand keywords with spaces stripped. Meta allows 30 unique hashtags per
+# rolling 7 days, so keep this list short and stable.
+if hashtags = System.get_env("SMM_INSTAGRAM_HASHTAGS") do
+  config :smm_monitor, SmmMonitor.Fetchers.Instagram,
+    hashtags: hashtags |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
+end
+
+if interval_ms = System.get_env("SMM_INSTAGRAM_POLL_INTERVAL_MS") do
+  config :smm_monitor, :platforms, instagram: [interval_ms: String.to_integer(interval_ms)]
+end
+
 # Which subreddits the Reddit fetcher watches. Comma-separated; an empty
 # value searches all of Reddit.
 if subreddits = System.get_env("SMM_REDDIT_SUBREDDITS") do

@@ -60,7 +60,14 @@ config :smm_monitor, :platforms,
     interval_ms: :timer.minutes(5),
     opts: []
   ],
-  instagram: [module: SmmMonitor.Fetchers.Instagram, enabled: true, opts: []]
+  instagram: [
+    module: SmmMonitor.Fetchers.Instagram,
+    enabled: true,
+    # Several requests per poll against Meta's hourly allowance, and the
+    # edges it reads move slowly. Every 15 minutes is plenty.
+    interval_ms: :timer.minutes(15),
+    opts: []
+  ]
 
 # Reddit is the one platform with a live implementation. Which subreddits
 # to watch is deployment-specific, so `SMM_REDDIT_SUBREDDITS` overrides
