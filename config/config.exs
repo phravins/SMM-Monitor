@@ -25,7 +25,11 @@ config :smm_monitor,
   # this off so they can exercise the processing layer in isolation.
   start_fetchers: true,
   # The TUI is started by `mix smm.tui` / the escript, not by the app itself.
-  start_tui: false
+  start_tui: false,
+  # Remote access over SSH is opt-in; see SMM_SSH_ENABLED in the README.
+  ssh_enabled: false,
+  # Unprivileged by default, so the app never needs root to bind.
+  ssh_port: 2222
 
 # One entry per platform worker. `module` implements SmmMonitor.Fetchers.Fetcher.
 # Adding a platform is a matter of writing the module and adding a line here.

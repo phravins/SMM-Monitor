@@ -50,7 +50,8 @@ defmodule SmmMonitor.MixProject do
       # standard Elixir/SQLite pairing and uses exqlite as its driver, so
       # this isn't a choice against exqlite - exqlite still does the work.
       {:ecto_sql, "~> 3.14"},
-      {:ecto_sqlite3, "~> 0.24"}
+      {:ecto_sqlite3, "~> 0.24"},
+      {:garnish, "~> 0.3"}
     ]
   end
 end

@@ -148,7 +148,12 @@ defmodule SmmMonitor.Persistence.BootTest do
     processor =
       start_supervised!(
         {Processor,
-         [name: name, table: table, persist?: false, load_history?: Keyword.get(opts, :load_history?, true)]},
+         [
+           name: name,
+           table: table,
+           persist?: false,
+           load_history?: Keyword.get(opts, :load_history?, true)
+         ]},
         id: name
       )
 

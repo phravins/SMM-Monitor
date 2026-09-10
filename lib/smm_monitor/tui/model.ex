@@ -31,6 +31,10 @@ defmodule SmmMonitor.TUI.Model do
             flash: nil,
             # Set when the user asks to quit; the app acts on it.
             quit: false,
+            # True for sessions that may view but not change config. Set
+            # at construction rather than sniffed from the connection, so
+            # a session cannot talk its way out of it later.
+            read_only: false,
             stats: %{count: 0, positive: 0, neutral: 0, negative: 0, score: 0},
             breakdown: %{},
             mentions: [],
@@ -72,6 +76,7 @@ defmodule SmmMonitor.TUI.Model do
     %__MODULE__{
       tabs: [:all | SmmMonitor.platforms()] ++ [:config],
       rows: rows_for(context),
+      read_only: Map.get(context, :read_only, false),
       keywords: SmmMonitor.config(:keywords, []),
       mock_mode: SmmMonitor.config(:mock_mode, true),
       window_ms: SmmMonitor.config(:window_ms, :timer.hours(24))
@@ -263,6 +268,13 @@ defmodule SmmMonitor.TUI.Model do
   value so an edit is a correction rather than a retype.
   """
   @spec start_editing(t()) :: t()
+  def start_editing(%__MODULE__{read_only: true} = model) do
+    %{
+      model
+      | flash: {:error, "read-only session — config can only be changed from the host terminal"}
+    }
+  end
+
   def start_editing(%__MODULE__{} = model) do
     %{
       model
@@ -286,6 +298,13 @@ defmodule SmmMonitor.TUI.Model do
   """
   @spec commit_editing(t()) :: t()
   def commit_editing(%__MODULE__{editing: nil} = model), do: model
+
+  # Belt and braces: start_editing/1 already refuses, so reaching here on
+  # a read-only session would mean a bug rather than a user action. Fail
+  # closed regardless.
+  def commit_editing(%__MODULE__{read_only: true} = model) do
+    %{model | editing: nil, buffer: "", flash: {:error, "read-only session — nothing was saved"}}
+  end
 
   def commit_editing(%__MODULE__{editing: field, buffer: buffer} = model) do
     case write_field(field, buffer) do

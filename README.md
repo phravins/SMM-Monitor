@@ -184,6 +184,123 @@ one.
 Credentials are deliberately not editable from the screen: they belong in
 the environment, not in a file the dashboard writes.
 
+## Remote access over SSH
+
+Anyone on the team can view the live dashboard from their own terminal,
+without access to the machine it runs on:
+
+```sh
+ssh -p 2222 viewer@your-host
+```
+
+The dashboard renders in their terminal exactly as it does locally. Each
+connection gets its own tab and scroll position while reading the same
+underlying data, so two people can look at different platforms at the
+same time.
+
+**Remote sessions are read-only.** The config tab renders — what's being
+tracked is useful context — but editing is refused with a message saying
+where it can be changed. Only the host terminal can change config.
+
+### Turning it on
+
+Off by default; a dashboard that starts listening on a port because
+someone upgraded is not a pleasant surprise.
+
+```sh
+SMM_SSH_ENABLED=true          # opens the port
+SMM_SSH_PORT=2222             # default; unprivileged, so no root needed
+```
+
+On first boot it generates a host key and logs the port:
+
+```
+[info] ssh: generating a host key at ~/.local/share/smm_monitor/ssh/ssh_host_rsa_key (first boot)
+[info] ssh: dashboard available on port 2222 (3 authorised key(s))
+```
+
+### Adding a team member
+
+1. **They** generate a keypair and send you the `.pub` file:
+
+   ```sh
+   ssh-keygen -t ed25519 -C "alice@realoffice"
+   cat ~/.ssh/id_ed25519.pub
+   ```
+
+2. **You** append that line to the authorized keys file:
+
+   ```sh
+   cat alice.pub >> ~/.config/smm_monitor/authorized_keys
+   ```
+
+3. They connect. **No restart needed** — the file is re-read on every
+   authentication attempt, so a key works within seconds of being added.
+
+Removing someone is the same in reverse: delete their line and their next
+attempt is refused. Revocation is immediate for the same reason.
+
+The file is an ordinary OpenSSH `authorized_keys` — one key per line,
+`#` comments and blank lines ignored. Override its location with
+`SMM_SSH_AUTHORIZED_KEYS`.
+
+> **It fails closed.** A missing, unreadable or empty authorized keys file
+> authorises *nobody*. "No keys configured" never means "allow everyone".
+
+### The host key
+
+Generated once on first boot and kept at
+`~/.local/share/smm_monitor/ssh/` (override with `SMM_SSH_HOST_KEY_DIR`).
+
+It must stay stable: clients pin it in `known_hosts` on first connection,
+and a key that rotated every restart would greet everyone with `REMOTE
+HOST IDENTIFICATION HAS CHANGED` and refuse to connect. It's generated
+with Erlang's own crypto, so `ssh-keygen` doesn't need to be installed on
+the server, and written `0600` in a `0700` directory.
+
+### Security
+
+**Traffic is encrypted.** This is a real SSH server (Erlang's `:ssh`), so
+the transport gets the same encryption, integrity and host-key
+verification as any other SSH connection.
+
+**Only the dashboard is exposed.** Shell, exec and SFTP are all disabled
+in the daemon options — a connecting client can draw the dashboard and
+nothing else. There is no way to get a command prompt through this port.
+Password authentication is never offered; a public key is the only way
+in.
+
+**What a viewer can see:** every mention collected, the brand terms and
+subreddits being tracked, and each platform's mock/live mode. **What they
+cannot see:** any API credential — those live in the environment and are
+never rendered.
+
+#### Is it safe to expose publicly?
+
+**Put it behind a VPN or a firewall.** Not because of a known weakness,
+but because the honest risk assessment is:
+
+* The authentication itself is sound — Erlang's `:ssh` with public-key
+  auth, no passwords, no shell.
+* But this is a hobby-scale service exposed to the internet. It has had
+  nowhere near the scrutiny OpenSSH has, it has no fail2ban-style
+  throttling, no connection rate limiting, and no audit logging beyond a
+  line per connection.
+* An unauthenticated attacker reaching the port can attempt key auth
+  indefinitely.
+
+For a team dashboard, the sensible shape is: bind it on a private
+network, and reach it over your existing VPN or an SSH tunnel through a
+host you already trust:
+
+```sh
+ssh -L 2222:localhost:2222 you@bastion   # then: ssh -p 2222 viewer@localhost
+```
+
+If you do open it, the firewall rule is **inbound TCP on
+`SMM_SSH_PORT`** (2222 by default) — and restrict the source range to
+your office or VPN rather than `0.0.0.0/0`.
+
 ## Stored history
 
 Mentions are written to a SQLite database as they arrive, so history
@@ -508,6 +625,10 @@ its text.
 | `SMM_MOCK_YOUTUBE` | Per-platform override for YouTube. Unset inherits the global. |
 | `SMM_KEYWORDS` | Comma-separated brand terms — the *default* before anything is saved from the config screen |
 | `SMM_CONFIG_FILE` | Where runtime-editable settings are saved |
+| `SMM_SSH_ENABLED` | Serve the dashboard over SSH (default false) |
+| `SMM_SSH_PORT` | Port to listen on (default 2222) |
+| `SMM_SSH_AUTHORIZED_KEYS` | Public keys allowed to connect |
+| `SMM_SSH_HOST_KEY_DIR` | Where the server's host key is kept |
 | `SMM_DB_PATH` | Where collected mentions are stored |
 | `SMM_RETENTION_DAYS` | How long mentions are kept on disk (default 30) |
 | `SMM_HISTORY_LIMIT` | Mentions per platform restored on boot (default 200) |
@@ -556,6 +677,7 @@ SmmMonitor.Supervisor                    (one_for_one)
 ├── SmmMonitor.Persistence.Writer        off-critical-path writes
 ├── SmmMonitor.Persistence.Retention     daily prune
 ├── SmmMonitor.Processing.Processor      ETS owner, scoring, aggregation
+├── SmmMonitor.SSH.Server                remote dashboard, when enabled
 ├── SmmMonitor.Fetchers.Supervisor       (one_for_one)
 │   ├── PlatformSupervisor(:reddit)    → Worker(:reddit)
 │   ├── PlatformSupervisor(:youtube)   → Worker(:youtube)
@@ -598,6 +720,16 @@ one `insert_all`, so batching comes for free without a flush timer. The
 supervisor waits for each child's `start_link` to return, guaranteeing
 the table exists before the processor queries it. A `Task` would return
 as soon as it was spawned.
+
+**SSH.** `Garnish` serves the same dashboard to remote terminals, one
+channel process per session. Garnish is a fork of Ratatouille adapted for
+SSH, and its `Garnish.App` behaviour is *not* `Ratatouille.App` — it has
+`handle_key/2` instead of `update/2`, no `subscribe/1` (so the refresh
+tick is ours), and terminfo mnemonics instead of termbox constants. None
+of that reached `TUI.Model`: keeping the dashboard's behaviour free of
+any TUI library is what made SSH support a new renderer and a thin
+adapter rather than a rewrite. The layout itself is shared with the local
+renderer via `TUI.Renderers.Common`.
 
 **Processing.** One GenServer with a narrow job: score sentiment,
 de-duplicate, store, prune. It doesn't fetch and it doesn't render. Writes
@@ -741,6 +873,8 @@ Compile-time defaults live in `config/config.exs`:
 | `:config_file` | per-user path | Where runtime-editable settings are saved |
 | `:db_retention_days` | `30` | How long mentions are kept on disk |
 | `:history_limit` | `200` | Mentions per platform restored on boot |
+| `:ssh_enabled` | `false` | Whether the SSH server starts |
+| `:ssh_port` | `2222` | Port the SSH server listens on |
 | `:start_persistence` | `true` | Whether the tree starts the repo and migrator |
 | `:persist_writes` | `true` | Whether mentions are written to disk |
 | `:platforms` | four entries | Platform → module, enabled flag, opts |
@@ -802,3 +936,7 @@ runtime. Both live platforms search for the *same* brand terms.
   remaining quota — so it can't see another process sharing the key.
 * Twitter and Instagram are still fixture-backed; both need paid or
   reviewed API access.
+* SSH access has no rate limiting or audit trail beyond one log line per
+  connection — run it behind a VPN or firewall rather than exposed.
+* Remote sessions are read-only; there's no per-user permission model,
+  only "host terminal" versus "everyone else".
