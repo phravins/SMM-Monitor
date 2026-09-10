@@ -17,11 +17,17 @@ defmodule SmmMonitor.Config.Store do
 
   ## Where it lives
 
-  `priv/runtime_config.json` by default, overridable with the
-  `SMM_CONFIG_FILE` environment variable or the `:config_file` application
-  setting. The override matters for releases: a release replaces its `priv`
-  directory on upgrade, so config stored there would not survive one. Point
-  `SMM_CONFIG_FILE` somewhere outside the release for anything long-lived.
+  `~/.config/smm_monitor/config.json` by default (honouring
+  `XDG_CONFIG_HOME`), overridable with the `SMM_CONFIG_FILE` environment
+  variable or the `:config_file` application setting.
+
+  Deliberately *not* under the app's `priv` directory, which is the
+  obvious-looking choice: `:code.priv_dir/1` resolves to the **build**
+  copy (`_build/dev/lib/smm_monitor/priv/`), not the source tree, so
+  settings saved there are a build artifact — `mix clean` or a fresh
+  checkout would silently discard them, and a release replaces its `priv`
+  directory wholesale on upgrade. Somebody's saved brand terms should
+  outlive a rebuild.
 
   ## Failure handling
 
@@ -36,19 +42,19 @@ defmodule SmmMonitor.Config.Store do
   require Logger
 
   @version 1
-  @default_filename "runtime_config.json"
+  @default_filename "config.json"
 
   @doc """
   Where the config file lives.
 
   `SMM_CONFIG_FILE` wins, then the `:config_file` application setting,
-  then `priv/runtime_config.json`.
+  then the per-user config directory.
   """
   @spec default_path() :: Path.t()
   def default_path do
     System.get_env("SMM_CONFIG_FILE") ||
       Application.get_env(:smm_monitor, :config_file) ||
-      priv_path()
+      user_config_path()
   end
 
   @doc """
@@ -115,13 +121,24 @@ defmodule SmmMonitor.Config.Store do
     end
   end
 
-  @doc "The default path under the application's priv directory."
-  @spec priv_path() :: Path.t()
-  def priv_path do
-    case :code.priv_dir(:smm_monitor) do
-      {:error, _reason} -> Path.join(["priv", @default_filename])
-      dir -> Path.join(to_string(dir), @default_filename)
-    end
+  @doc """
+  The per-user config path: `$XDG_CONFIG_HOME/smm_monitor/config.json`,
+  or `~/.config/smm_monitor/config.json`.
+
+  Falls back to a directory beside the working directory on the rare
+  system with no home directory, so this never returns something
+  unwritable-by-construction.
+  """
+  @spec user_config_path() :: Path.t()
+  def user_config_path do
+    base =
+      System.get_env("XDG_CONFIG_HOME") ||
+        case System.user_home() do
+          nil -> ".smm_monitor"
+          home -> Path.join(home, ".config")
+        end
+
+    Path.join([base, "smm_monitor", @default_filename])
   end
 
   # --- internals ------------------------------------------------------------

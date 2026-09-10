@@ -34,6 +34,7 @@ defmodule SmmMonitor.Fetchers.Reddit do
 
   require Logger
 
+  alias SmmMonitor.Config
   alias SmmMonitor.Fetchers.Fetcher
   alias SmmMonitor.Fetchers.Reddit.{Auth, RateLimit, State}
 
@@ -71,15 +72,30 @@ defmodule SmmMonitor.Fetchers.Reddit do
   end
 
   @doc """
-  Effective settings: module config, overridden by anything in the
-  platform's `:opts`. The override exists so tests can inject a stub
-  transport and a fixed subreddit list.
+  Effective settings: module config, then the runtime-editable subreddit
+  list from `SmmMonitor.Config`, then anything in the platform's `:opts`.
+
+  The `:opts` override is last so tests can inject a stub transport and a
+  fixed subreddit list without going near the running Config process.
   """
   @spec settings(Fetcher.context()) :: keyword()
   def settings(context) do
+    opts = Map.get(context, :opts) || []
+
     :smm_monitor
     |> Application.get_env(__MODULE__, [])
-    |> Keyword.merge(Map.get(context, :opts) || [])
+    |> Keyword.merge(runtime_settings(opts))
+    |> Keyword.merge(opts)
+  end
+
+  # Skipped when :opts already pins the subreddits, so a test never has to
+  # have a Config process running.
+  defp runtime_settings(opts) do
+    if Keyword.has_key?(opts, :subreddits) do
+      []
+    else
+      [subreddits: Config.subreddits()]
+    end
   end
 
   @doc """

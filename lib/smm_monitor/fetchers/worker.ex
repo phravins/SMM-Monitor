@@ -35,6 +35,7 @@ defmodule SmmMonitor.Fetchers.Worker do
 
   require Logger
 
+  alias SmmMonitor.Config
   alias SmmMonitor.Fetchers.Fetcher
   alias SmmMonitor.Monitor
 
@@ -215,10 +216,13 @@ defmodule SmmMonitor.Fetchers.Worker do
   defp do_fetch(module, :live, context, platform_state),
     do: module.fetch(context, platform_state)
 
+  # Read fresh on every poll rather than cached at startup: that is what
+  # lets a keyword changed in the config screen take effect on the next
+  # poll with no restart.
   defp build_context(state) do
     %{
       platform: state.platform,
-      keywords: SmmMonitor.config(:keywords, []),
+      keywords: Config.keywords(),
       credentials: credentials(state.platform),
       opts: state.opts,
       poll_count: state.poll_count,
@@ -239,7 +243,7 @@ defmodule SmmMonitor.Fetchers.Worker do
   def context_for(module, opts \\ []) do
     %{
       platform: module.platform(),
-      keywords: SmmMonitor.config(:keywords, []),
+      keywords: Config.keywords(),
       credentials: credentials(module.platform()),
       opts: opts,
       poll_count: 0,
