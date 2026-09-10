@@ -23,6 +23,7 @@ defmodule SmmMonitor.Persistence.ClientRecord do
   use Ecto.Schema
 
   alias SmmMonitor.Client
+  alias SmmMonitor.Client.AlertConfig
 
   @type t :: %__MODULE__{}
 
@@ -34,6 +35,8 @@ defmodule SmmMonitor.Persistence.ClientRecord do
     field(:keywords, :string)
     field(:subreddits, :string)
     field(:active, :boolean, default: true)
+    # The client's alert thresholds and watch phrases, as JSON.
+    field(:alert_config, :string)
     field(:created_at, :utc_datetime_usec)
     field(:updated_at, :utc_datetime_usec)
   end
@@ -47,6 +50,7 @@ defmodule SmmMonitor.Persistence.ClientRecord do
       keywords: join(client.keywords),
       subreddits: join(client.subreddits),
       active: client.active,
+      alert_config: encode_alerts(client.alerts),
       created_at: usec(client.created_at || now),
       updated_at: usec(now)
     }
@@ -61,8 +65,27 @@ defmodule SmmMonitor.Persistence.ClientRecord do
       keywords: Client.normalize(record.keywords),
       subreddits: Client.normalize(record.subreddits),
       active: record.active,
+      alerts: decode_alerts(record.alert_config),
       created_at: record.created_at
     }
+  end
+
+  defp encode_alerts(nil), do: nil
+
+  defp encode_alerts(%AlertConfig{} = config) do
+    config |> AlertConfig.to_map() |> Jason.encode!()
+  end
+
+  # A row written before alerting was configurable, or one hand-edited
+  # into invalid JSON, falls back to the defaults rather than failing the
+  # whole client list load.
+  defp decode_alerts(nil), do: AlertConfig.new()
+
+  defp decode_alerts(json) when is_binary(json) do
+    case Jason.decode(json) do
+      {:ok, attrs} when is_map(attrs) -> AlertConfig.new(attrs)
+      _invalid -> AlertConfig.new()
+    end
   end
 
   defp join(values), do: values |> List.wrap() |> Enum.join(",")

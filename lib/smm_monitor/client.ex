@@ -28,6 +28,8 @@ defmodule SmmMonitor.Client do
   name.
   """
 
+  alias SmmMonitor.Client.AlertConfig
+
   @enforce_keys [:id, :name]
   defstruct [
     :id,
@@ -37,6 +39,9 @@ defmodule SmmMonitor.Client do
     # An inactive client keeps its history but is not polled for. Cheaper
     # and less destructive than deleting one whose contract is on hold.
     active: true,
+    # When this client's monitoring should wake somebody up. Per client,
+    # because the thresholds that matter differ by brand.
+    alerts: nil,
     created_at: nil
   ]
 
@@ -46,6 +51,7 @@ defmodule SmmMonitor.Client do
           keywords: [String.t()],
           subreddits: [String.t()],
           active: boolean(),
+          alerts: SmmMonitor.Client.AlertConfig.t(),
           created_at: DateTime.t() | nil
         }
 
@@ -96,6 +102,7 @@ defmodule SmmMonitor.Client do
            keywords: keywords,
            subreddits: normalize(Map.get(attrs, :subreddits)),
            active: Map.get(attrs, :active, true),
+           alerts: alert_config(Map.get(attrs, :alerts)),
            created_at: Map.get(attrs, :created_at) || DateTime.utc_now()
          }}
     end
@@ -116,9 +123,15 @@ defmodule SmmMonitor.Client do
       keywords: Map.get(attrs, :keywords, client.keywords),
       subreddits: Map.get(attrs, :subreddits, client.subreddits),
       active: Map.get(attrs, :active, client.active),
+      alerts: Map.get(attrs, :alerts, client.alerts),
       created_at: client.created_at
     })
   end
+
+  # A client always has an alert config, defaulted rather than nil, so
+  # nothing downstream has to check before reading a threshold.
+  defp alert_config(%AlertConfig{} = config), do: config
+  defp alert_config(attrs), do: AlertConfig.new(attrs)
 
   @doc """
   Turns a name into a url-safe, readable id.
