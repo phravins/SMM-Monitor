@@ -9,6 +9,7 @@ defmodule SmmMonitor.Application do
       ├── SmmMonitor.Persistence.Writer      — off-critical-path writes
       ├── SmmMonitor.Persistence.Retention   — daily prune
       ├── SmmMonitor.Processing.Processor    — ETS owner + aggregation
+      ├── SmmMonitor.Alerts                  — negative-sentiment spikes
       ├── SmmMonitor.SSH.Server              — remote dashboard, when enabled
       ├── SmmMonitor.Fetchers.Supervisor     — one child supervisor per platform
       │   ├── PlatformSupervisor(:reddit)    — Worker(:reddit)
@@ -38,6 +39,7 @@ defmodule SmmMonitor.Application do
       [SmmMonitor.Config] ++
         persistence_children() ++
         [SmmMonitor.Processing.Processor] ++
+        alert_children() ++
         ssh_children() ++
         fetcher_children() ++
         tui_children()
@@ -62,6 +64,16 @@ defmodule SmmMonitor.Application do
   defp writer_children do
     if SmmMonitor.config(:persist_writes, true) do
       [SmmMonitor.Persistence.Writer, SmmMonitor.Persistence.Retention]
+    else
+      []
+    end
+  end
+
+  # Alerting needs the processor (for the current window) and the repo
+  # (for the baseline), so it starts after both.
+  defp alert_children do
+    if SmmMonitor.Alerts.enabled?() do
+      [SmmMonitor.Alerts]
     else
       []
     end
