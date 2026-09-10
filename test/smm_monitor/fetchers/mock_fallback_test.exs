@@ -13,7 +13,7 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
 
   import ExUnit.CaptureLog
 
-  alias SmmMonitor.Fetchers.{PlatformSupervisor, Reddit, Worker}
+  alias SmmMonitor.Fetchers.{PlatformSupervisor, Reddit, Worker, YouTube}
   alias SmmMonitor.Monitor
 
   setup do
@@ -55,6 +55,74 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
       assert SmmMonitor.mock_platform?(:youtube)
       assert SmmMonitor.mock_platform?(:twitter)
       assert SmmMonitor.mock_platform?(:instagram)
+    end
+
+    test "platforms are switched independently of one another" do
+      Application.put_env(:smm_monitor, :mock_platforms, reddit: false, youtube: true)
+
+      refute SmmMonitor.mock_platform?(:reddit)
+      assert SmmMonitor.mock_platform?(:youtube)
+
+      Application.put_env(:smm_monitor, :mock_platforms, reddit: true, youtube: false)
+
+      assert SmmMonitor.mock_platform?(:reddit)
+      refute SmmMonitor.mock_platform?(:youtube)
+      # Whatever Reddit and YouTube are doing, the stubs stay mocked.
+      assert SmmMonitor.mock_platform?(:twitter)
+      assert SmmMonitor.mock_platform?(:instagram)
+    end
+  end
+
+  describe "YouTube with no API key" do
+    setup do
+      Application.put_env(:smm_monitor, :mock_platforms, youtube: false)
+      Application.put_env(:smm_monitor, :credentials, youtube: [])
+      :ok
+    end
+
+    test "falls back to mock data instead of crashing" do
+      log =
+        capture_log(fn ->
+          start_worker(:youtube, YouTube)
+          assert eventually(fn -> polled?(:youtube) end)
+        end)
+
+      status = Worker.status(:youtube)
+      assert status.mode == :mock
+      assert status.inserted > 0
+      assert is_nil(status.last_error)
+      assert Monitor.stats(:youtube).count > 0
+      assert log =~ "youtube"
+      assert log =~ "credentials are missing"
+    end
+
+    test "spends no API quota while falling back" do
+      # The whole point: no key means no calls, so nothing to spend.
+      capture_log(fn ->
+        start_worker(:youtube, YouTube)
+        assert eventually(fn -> polled?(:youtube) end)
+      end)
+
+      assert Worker.status(:youtube).mode == :mock
+    end
+
+    test "a blank key is treated as missing" do
+      Application.put_env(:smm_monitor, :credentials, youtube: [api_key: "   "])
+
+      capture_log(fn ->
+        start_worker(:youtube, YouTube)
+        assert eventually(fn -> polled?(:youtube) end)
+      end)
+
+      assert Worker.status(:youtube).mode == :mock
+    end
+  end
+
+  describe "YouTube.ready?/1" do
+    test "is what decides live vs. fallback" do
+      refute YouTube.ready?(youtube_context(credentials: []))
+      refute YouTube.ready?(youtube_context(credentials: [api_key: ""]))
+      assert YouTube.ready?(youtube_context(credentials: [api_key: "key"]))
     end
   end
 
@@ -186,6 +254,17 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
       credentials: Keyword.fetch!(overrides, :credentials),
       opts: [],
       poll_count: 0
+    }
+  end
+
+  defp youtube_context(overrides) do
+    %{
+      platform: :youtube,
+      keywords: ["realoffice"],
+      credentials: Keyword.fetch!(overrides, :credentials),
+      opts: [],
+      poll_count: 0,
+      interval_ms: :timer.minutes(18)
     }
   end
 
