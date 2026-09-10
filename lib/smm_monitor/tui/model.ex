@@ -16,6 +16,7 @@ defmodule SmmMonitor.TUI.Model do
   alias SmmMonitor.Alerts
   alias SmmMonitor.Config
   alias SmmMonitor.Monitor
+  alias SmmMonitor.Processing.Sentiment
 
   @default_rows 12
 
@@ -38,7 +39,15 @@ defmodule SmmMonitor.TUI.Model do
             # at construction rather than sniffed from the connection, so
             # a session cannot talk its way out of it later.
             read_only: false,
-            stats: %{count: 0, positive: 0, neutral: 0, negative: 0, score: 0},
+            stats: %{
+              count: 0,
+              positive: 0,
+              neutral: 0,
+              negative: 0,
+              score: 0,
+              value: 0.0,
+              average: 0.0
+            },
             breakdown: %{},
             mentions: [],
             statuses: [],
@@ -230,6 +239,59 @@ defmodule SmmMonitor.TUI.Model do
       neutral = div(stats.neutral * width, total)
       {positive, neutral, width - positive - neutral}
     end
+  end
+
+  @doc """
+  The window's mean sentiment, from `-1.0` to `1.0`.
+
+  Falls back to `0.0` for stats maps written before scoring became
+  numeric, so an old snapshot renders as neutral rather than crashing.
+  """
+  @spec average_sentiment(t()) :: float()
+  def average_sentiment(%__MODULE__{stats: stats}), do: Map.get(stats, :average) || 0.0
+
+  @doc """
+  The label the mean score falls under, using the scorer's own band.
+
+  Reading it from `Sentiment` rather than hardcoding `> 0` keeps the
+  dashboard's idea of "neutral" identical to each mention's.
+  """
+  @spec average_label(t()) :: :positive | :neutral | :negative
+  def average_label(%__MODULE__{} = model) do
+    model |> average_sentiment() |> Sentiment.label()
+  end
+
+  @doc """
+  Lays out a diverging meter for the mean score across `width` columns.
+
+  Returns `{left_pad, negative, positive, right_pad}` column counts: the
+  bar grows left from a fixed centre when the mean is negative and right
+  when it is positive, so the eye reads direction from which side is lit
+  rather than from a number. The centre marker is drawn by the renderer
+  and is not counted here, so the four values plus one fill `width`.
+
+  A non-zero score always lights at least one column: rounding a genuine
+  -0.02 down to an empty bar would show "no feeling" where there is
+  faint feeling.
+  """
+  @spec sentiment_gauge(t(), pos_integer()) ::
+          {non_neg_integer(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
+  def sentiment_gauge(%__MODULE__{} = model, width) do
+    half = div(width - 1, 2)
+    average = average_sentiment(model)
+    magnitude = gauge_magnitude(average, half)
+
+    if average < 0 do
+      {half - magnitude, magnitude, 0, half}
+    else
+      {half, 0, magnitude, half - magnitude}
+    end
+  end
+
+  defp gauge_magnitude(average, half) do
+    scaled = average |> abs() |> Kernel.*(half) |> round() |> min(half)
+
+    if scaled == 0 and average != 0.0, do: min(1, half), else: scaled
   end
 
   @doc "Label for a tab, with its count, e.g. `\"reddit (12)\"`."
