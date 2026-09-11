@@ -606,9 +606,21 @@ defmodule SmmMonitor.TUI.Renderers.Common do
 
           label(content: "")
 
+          # This used to say mock/live was an environment variable needing
+          # a restart. That stopped being true for half the platforms
+          # when the wizard learned to store keys: those go live on the
+          # next poll. Saying otherwise sends somebody off to edit a
+          # shell profile for no reason, on the one screen where they
+          # came to fix exactly this.
+          label do
+            text(content: "  reddit, youtube: press ", color: @muted)
+            text(content: "S", color: @accent, attributes: @bold)
+            text(content: " to add keys — live on the next poll", color: @muted)
+          end
+
           label do
             text(
-              content: "  mock/live is set by environment variables and needs a restart",
+              content: "  twitter, instagram: set their env vars, then restart",
               color: @muted
             )
           end
@@ -827,9 +839,11 @@ defmodule SmmMonitor.TUI.Renderers.Common do
       end
 
       # The screen has more verbs than the rest of the dashboard, so they
-      # are listed rather than left to be discovered.
+      # are listed rather than left to be discovered — `S` included. It
+      # was bound and unlisted, which is the same as not existing for
+      # anybody who hasn't read the README.
       defp config_help do
-        "j/k client · h/l field · e edit · + add · d remove · p pause · s view"
+        "j/k client · h/l field · e edit · + add · d remove · p pause · s view · S keys"
       end
 
       defp mentions_table(model) do

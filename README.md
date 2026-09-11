@@ -26,6 +26,12 @@ client can actually be handed.
  all twitter instagram reddit youtube · j/k scroll · q quit · reddit:mock …
 ```
 
+The `MOCK DATA` in that header is not decoration. Until you connect an
+account, every mention you see is invented — see
+[Is any of this real? Not yet](#is-any-of-this-real-not-yet) for what
+that means and [Connecting your accounts](#connecting-your-accounts) for
+how to change it.
+
 ## Quick start
 
 **macOS or Linux** — paste this into a terminal:
@@ -57,8 +63,14 @@ you have them.
 
 Works out whether you're on macOS or Linux and which chip you have,
 downloads the one file that matches from the latest release, and puts it
-in `~/.local/bin`. No admin rights, nothing installed system-wide, and
-uninstalling is `rm ~/.local/bin/smm-monitor`.
+in `~/.local/bin`. No admin rights and nothing installed system-wide.
+
+To uninstall, delete the binary and the copy it unpacked:
+
+```sh
+rm ~/.local/bin/smm-monitor
+smm-monitor maintenance uninstall   # or: rm -rf ~/.local/share/.burrito
+```
 
 The binary carries its own copy of the Erlang runtime — about 17 MB —
 which is why you don't have to install anything else.
@@ -73,6 +85,34 @@ Prefer to pick the file yourself? They're on the
 [releases page](https://github.com/phravins/SMM-Monitor/releases), one
 per operating system and chip.
 </details>
+
+### If the dashboard doesn't appear
+
+Run `smm-monitor` and get an error instead of a dashboard? It will
+normally tell you what to do. The one worth knowing about in advance:
+
+> SMM Monitor could not start the dashboard.
+
+The binary carries its runtime compressed inside it and unpacks it on
+first run into `~/.local/share/.burrito/` (on macOS, `~/Library/Application
+Support/.burrito/`). It only unpacks once per version — so if that copy
+is stale, from an earlier build of the same version, it is reused
+forever, and **downloading the app again does not replace it**. Delete
+it and start the app again:
+
+```sh
+rm -rf ~/.local/share/.burrito
+smm-monitor
+```
+
+Only the unpacked program lives there; your clients, mentions and
+settings are stored elsewhere and are untouched. Re-running the
+installer now does this for you.
+
+A blank screen or boxes drawn as `?` is a different problem: the
+terminal, not the app. On Windows use Windows Terminal rather than the
+old console window, and see [Terminal size](#terminal-size) if the
+dashboard looks cramped.
 
 ### Keyboard shortcuts
 
@@ -116,6 +156,202 @@ restart.
 Three things count as "already set up", so the wizard never appears on a
 server or in a script: credentials in the environment, systemd's
 `STATE_DIRECTORY`, or `SMM_SETUP_COMPLETE=1`.
+
+## Is any of this real? Not yet
+
+Start the app and the dashboard immediately fills with mentions, scores
+and charts. **None of it is real.** Nothing has been fetched from
+Reddit, YouTube, X or Instagram, and no account of yours is involved.
+Those posts were invented locally so the dashboard has something to show
+before you've set anything up.
+
+The app says so in its own header. The top line of every screen ends
+with one of two words:
+
+```
+SMM MONITOR · OSWORKS 1/2 [[/]] · osworks, os works · MOCK DATA · updated 12:14
+                                                      ^^^^^^^^^
+```
+
+| In the header | What it means |
+| --- | --- |
+| `MOCK DATA` (amber) | Invented posts. Nothing is being collected. |
+| `LIVE` (green) | Real posts, from at least one connected platform. |
+
+That one word is the only thing you need to check. Everything downstream
+— the sentiment scores, the trend charts, any report you export — is
+only as real as that word says it is.
+
+This is the default on purpose: the dashboard should work the moment you
+install it, before any account exists and before any key is issued. It
+stays that way until you connect a platform yourself.
+
+## Connecting your accounts
+
+### Which one to start with
+
+The four platforms are not equivalent — two are free and can be set up
+from inside the dashboard, two need a paid plan or a business account
+and can only be switched on with environment variables.
+
+| Platform | Cost | Set up from | What it can actually find |
+| --- | --- | --- | --- |
+| **Reddit** | Free | The dashboard | Public posts and comments matching your brand terms, across Reddit |
+| **YouTube** | Free quota | The dashboard | Public videos and comments matching your brand terms |
+| **X (Twitter)** | Paid plan | Environment variable | Recent public posts matching your brand terms |
+| **Instagram** | Business account | Environment variable | Only your own account's surroundings — [see below](#instagram-and-the-thing-it-cannot-do) |
+
+**Start with Reddit.** It is free, it takes about three minutes, and it
+is the one that behaves most like what people expect the whole app to
+do.
+
+### First, point it at your own brand
+
+Before connecting anything, make sure it is searching for the right
+words. A fresh install watches `realoffice, real office`, which are
+placeholders, not yours.
+
+Press `c` for the clients screen, then:
+
+| Key | What it does |
+| --- | --- |
+| `j` / `k` | Move between clients |
+| `h` / `l` | Move between a client's fields |
+| `e` or `Enter` | Edit the field you're on |
+| `Enter` | Save |
+
+Set **name** to the brand and **brand terms** to the words people
+actually write — for OSWORKS, something like `osworks, os works,
+osworks.in`. Add subreddits worth watching while you're there.
+
+While you're editing a field, every key is typed as text, including `q`
+and the tab letters — so a brand term like "quality" goes in fine.
+`Ctrl-C` always quits.
+
+### Reddit — free, about three minutes
+
+1. Sign in to Reddit and open <https://www.reddit.com/prefs/apps>.
+2. At the bottom, choose **create another app**.
+3. Give it any name, pick the **script** type, and put
+   `http://localhost:8080` as the redirect URI. Nothing uses it; the form
+   simply insists on one.
+4. Click **create app**. You now have two strings: the **client ID** is
+   the short one printed under the app's name, and the **secret** is the
+   one labelled `secret`.
+5. In SMM Monitor press `c`, then `S`. Paste each one when asked.
+
+Reddit goes live on the next poll — about thirty seconds — and the
+header changes from `MOCK DATA` to `LIVE`. There is nothing to restart.
+
+More detail, including exactly what gets asked of Reddit:
+[Getting Reddit API credentials](#getting-reddit-api-credentials).
+
+### YouTube — free, about five minutes
+
+1. Open the [Google Cloud console](https://console.cloud.google.com/)
+   and create a project. Any name.
+2. In **APIs & Services → Library**, find **YouTube Data API v3** and
+   enable it.
+3. In **APIs & Services → Credentials**, choose **Create credentials →
+   API key**, and copy it.
+4. In SMM Monitor press `c`, then `S`, and paste the key at the YouTube
+   step.
+
+YouTube's free allowance is 10,000 quota units a day and one search
+costs 100, so it polls on a slower schedule than the others by design.
+If you watch several clients, read
+[Quota: the thing that actually constrains YouTube](#quota-the-thing-that-actually-constrains-youtube)
+before you run out at lunchtime.
+
+### X (Twitter) — needs a paid plan
+
+There is no free path to this data: X's free tier can post but cannot
+read search results. Budget for at least the Basic plan before wiring it
+up.
+
+Once you have a **bearer token**, X is not set up from the dashboard.
+Start the app with both the token and the switch that takes X off demo
+data:
+
+```sh
+TWITTER_BEARER_TOKEN=AAAA... SMM_MOCK_TWITTER=false smm-monitor
+```
+
+To avoid retyping that every time, put both in `~/.bashrc` with
+`export` in front of each and open a new terminal.
+
+Full walkthrough:
+[Getting an X (Twitter) API bearer token](#getting-an-x-twitter-api-bearer-token).
+
+### Instagram, and the thing it cannot do
+
+Read this before spending an afternoon on it.
+
+> **Instagram has no keyword search.** No endpoint anywhere in Meta's
+> API takes a word and returns public posts containing it. If what you
+> wanted was "type my brand name, see who mentioned it on Instagram" —
+> that cannot be built by polling, by anyone. It is a platform
+> restriction, not a gap in this app.
+
+What you can have instead are three narrow views of your own account:
+media you were **@-tagged** in, **comments** on your own posts, and
+public media carrying a **hashtag** you track (30 hashtags per rolling
+week, and Meta strips the author, so those arrive credited to the
+hashtag rather than a person).
+
+It needs a Business or Creator account linked to a Facebook Page, plus a
+Meta app. Then, like X, an environment variable:
+
+```sh
+INSTAGRAM_ACCESS_TOKEN=EAAG... SMM_MOCK_INSTAGRAM=false smm-monitor
+```
+
+Full walkthrough:
+[Getting Instagram Graph API access](#getting-instagram-graph-api-access).
+What it can and cannot see, in detail:
+[What Instagram monitoring can and cannot see](#what-instagram-monitoring-can-and-cannot-see).
+
+### The trap: a key alone is not enough
+
+Keys typed into the wizard (`c` then `S`) take Reddit and YouTube live
+by themselves. **Keys given as environment variables do not.** You must
+also set the matching switch:
+
+```sh
+SMM_MOCK_TWITTER=false      # or SMM_MOCK_INSTAGRAM, SMM_MOCK_REDDIT, …
+```
+
+Without it the app holds a perfectly good key and keeps showing you
+invented posts. The clients screen has a **PLATFORM MODE** panel listing
+all four as `mock` or `live` — check there if something isn't behaving.
+
+### Clearing out the demo mentions
+
+Connecting a platform does not delete the invented posts already
+stored. They stay in the database and keep skewing your trends and
+reports. Once the header says `LIVE`, quit the app and delete the file:
+
+```sh
+rm ~/.local/share/smm_monitor/mentions.db
+```
+
+It is recreated, empty, on the next start. Your clients and saved keys
+live elsewhere and are not affected.
+
+### What to expect once it's live
+
+Real monitoring is quieter than the demo. A brand that isn't being
+discussed produces an empty table, which is the correct answer rather
+than a fault.
+
+The [trend charts](#seeing-the-trend) build up one day at a time — a
+freshly connected install has no history, so give it a couple of days
+before the shape means anything. Only 30 days are kept
+([retention](#retention)), which is the ceiling on any window you pick.
+
+[Reports](#client-reports) (`R`) always produce a CSV; the PDF also
+needs Python and the reportlab library. And a report is only ever as
+real as the data behind it — connect first, then export.
 
 ## Monitoring several clients
 
@@ -255,12 +491,18 @@ you're ready.
 | Clients: add, remove, pause | **Clients screen, live** |
 | Brand terms, subreddits, name | **Clients screen, live** |
 | Alert thresholds, phrases, client webhook | **Clients screen, live** |
+| Reddit and YouTube keys, via `c` then `S` | **Setup wizard, live** |
+| X and Instagram keys (`TWITTER_*`, `INSTAGRAM_*`) | Env var + restart |
 | Mock/live per platform (`SMM_MOCK_*`) | Env var + restart |
-| API credentials (`REDDIT_*`, `YOUTUBE_API_KEY`, …) | Env var + restart |
 | Poll intervals, quota budget, window/retention | Env var + restart |
 
-Credentials are deliberately not editable from the screen: they belong in
-the environment, not in a table the dashboard writes.
+Reddit and YouTube keys are the exception, because they are the two a
+non-technical person is expected to add themselves: the wizard writes
+them to `~/.config/smm_monitor/settings.json` (readable only by you) and
+merges them into the running app, which takes that platform off demo
+data on the next poll. Nothing else is editable from the screen — a
+server's credentials belong in its environment, not in a table the
+dashboard writes.
 
 ⚠️ **Credentials are per install, not per client.** Every client is
 searched using the same Reddit app, YouTube key and X bearer token —
@@ -1321,7 +1563,9 @@ There are two switches. The per-platform one wins:
 
 A per-platform flag unset means *"inherit `SMM_MOCK_MODE`"*, not *"go
 live"* — so you can't accidentally start hitting an API by never setting
-it. All four platforms are independent: turning YouTube on has no effect
+it. The one exception is the setup wizard: Reddit and YouTube keys
+entered there switch that platform to live as they are saved, so you
+never have to set a flag for the two platforms the wizard covers. All four platforms are independent: turning YouTube on has no effect
 on Reddit, Twitter or Instagram.
 
 **A platform without credentials keeps serving mock data** rather than

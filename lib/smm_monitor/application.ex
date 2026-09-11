@@ -132,11 +132,27 @@ defmodule SmmMonitor.Application do
 
   # The TUI grabs the terminal, so it is opt-in: `mix smm.tui`, the escript,
   # or `SMM_TUI=1 mix run --no-halt`.
+  #
+  # A dashboard that cannot be drawn is not a supervision failure to be
+  # reported in OTP's terms — it is a sentence somebody needs to read. So
+  # the check happens here, before the child exists, rather than four
+  # frames inside Ratatouille's window process. See TUI.Preflight.
   defp tui_children do
     if SmmMonitor.config(:start_tui, false) do
-      [SmmMonitor.TUI.child_spec([])]
+      case SmmMonitor.TUI.Preflight.check() do
+        :ok -> [SmmMonitor.TUI.child_spec([])]
+        {:error, problem} -> halt_with_explanation(problem)
+      end
     else
       []
     end
+  end
+
+  # `halt/1` rather than raising: raising here is what produces the
+  # `Kernel pid terminated` wall of text and an erl_crash.dump in
+  # whatever directory the person happened to be standing in.
+  defp halt_with_explanation(problem) do
+    IO.write(:stderr, "\n" <> SmmMonitor.TUI.Preflight.explain(problem))
+    System.halt(1)
   end
 end
