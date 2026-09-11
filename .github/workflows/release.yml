@@ -1,0 +1,167 @@
+# Builds the downloadable binaries and attaches them to a GitHub Release.
+#
+# Tag a version (`git tag v0.1.0 && git push --tags`) and this publishes
+# the release. `workflow_dispatch` runs the same build without publishing
+# anything, which is how you check a change to this file before tagging.
+#
+# Every target is cross-built from one Linux runner. That is Burrito's
+# whole point, and it keeps the four binaries byte-for-byte reproducible
+# from a single toolchain instead of four differently-patched runners.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Also on any pull request that touches the build itself. A release
+  # workflow whose first run is the day you tag a version is a release
+  # workflow you are debugging in front of an audience.
+  pull_request:
+    paths:
+      - "mix.exs"
+      - "mix.lock"
+      - "scripts/burrito-cc"
+      - ".github/workflows/release.yml"
+      - ".github/scripts/smoke-test.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # The pair the project is developed and tested against. Burrito fetches
+  # a matching Erlang runtime for each target, so this decides what ends
+  # up inside the binaries.
+  ELIXIR_VERSION: "1.18.4"
+  OTP_VERSION: "25.3.2.8"
+  # Burrito 1.6 pins the Zig it will build a wrapper with, and refuses to
+  # run against any other version.
+  ZIG_VERSION: "0.16.0"
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    # 22.04 rather than latest: it is the oldest runner image that still
+    # has an Erlang 25 build, and the host glibc never reaches the
+    # binaries anyway — zig links them against musl.
+    runs-on: ubuntu-22.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux
+            asset: smm-monitor-linux-x86_64
+          - target: linux_arm
+            asset: smm-monitor-linux-arm64
+          - target: macos
+            asset: smm-monitor-macos-arm64
+          - target: macos_intel
+            asset: smm-monitor-macos-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - name: Install Zig
+        run: |
+          set -euo pipefail
+          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          curl -fsSL "$url" -o /tmp/zig.tar.xz
+          mkdir -p /opt/zig
+          tar -xf /tmp/zig.tar.xz -C /opt/zig --strip-components=1
+          echo "/opt/zig" >> "$GITHUB_PATH"
+
+      - name: Check the toolchain
+        run: |
+          zig version
+          elixir --version
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ env.OTP_VERSION }}-${{ hashFiles('mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-${{ env.OTP_VERSION }}-
+
+      - run: mix deps.get
+
+      - name: Build ${{ matrix.target }}
+        env:
+          MIX_ENV: prod
+          BURRITO_TARGET: ${{ matrix.target }}
+        run: mix release standalone --overwrite
+
+      - name: Name it what people download
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp "burrito_out/standalone_${{ matrix.target }}" "dist/${{ matrix.asset }}"
+          chmod +x "dist/${{ matrix.asset }}"
+          file "dist/${{ matrix.asset }}"
+          ls -lh "dist/${{ matrix.asset }}"
+
+      # The x86_64 Linux binary is the only one this runner can execute,
+      # so it is the only one that can be proved here rather than merely
+      # built. The macOS binary gets the same treatment in `smoke-macos`.
+      - name: Run it
+        if: matrix.target == 'linux'
+        run: ./.github/scripts/smoke-test.sh "dist/${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  smoke-macos:
+    name: run the macOS binary
+    needs: build
+    # Apple Silicon, which is what `macos-latest` means now.
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: smm-monitor-macos-arm64
+          path: dist
+
+      - name: Run it
+        run: |
+          chmod +x dist/smm-monitor-macos-arm64
+          ./.github/scripts/smoke-test.sh dist/smm-monitor-macos-arm64
+
+  publish:
+    name: attach to the release
+    needs: [build, smoke-macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          ls -lh dist
+
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --title "$tag" --generate-notes
+          fi
+
+          gh release upload "$tag" dist/* --clobber
