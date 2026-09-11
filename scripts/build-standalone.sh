@@ -55,6 +55,10 @@ restore_native_nifs() {
 
 trap restore_native_nifs EXIT
 
+echo "==> fetching and compiling dependencies for $MIX_ENV"
+mix deps.get
+mix deps.compile
+
 echo "==> building NIFs for $TRIPLE"
 CC="$(pwd)/scripts/burrito-cc" BURRITO_CC_TARGET="$TRIPLE" \
   mix deps.compile "${NIF_DEPS[@]}" --force

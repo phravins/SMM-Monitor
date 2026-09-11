@@ -45,6 +45,9 @@ jobs:
     # has an Erlang 25 build, and the host glibc never reaches the
     # binaries anyway — zig links them against musl.
     runs-on: ubuntu-22.04
+    # Each target takes a few minutes. Twenty-five is "something is
+    # wedged", and failing beats holding a runner for six hours.
+    timeout-minutes: 25
 
     strategy:
       fail-fast: false
@@ -81,15 +84,16 @@ jobs:
           zig version
           elixir --version
 
+      # Keyed per target: `_build` holds NIFs compiled for one of them,
+      # and handing a Linux job the macOS job's cache would be a puzzle
+      # to debug rather than a saving.
       - uses: actions/cache@v4
         with:
           path: |
             deps
             _build
-          key: ${{ runner.os }}-mix-${{ env.OTP_VERSION }}-${{ hashFiles('mix.lock') }}
-          restore-keys: ${{ runner.os }}-mix-${{ env.OTP_VERSION }}-
-
-      - run: mix deps.get
+          key: ${{ runner.os }}-${{ matrix.target }}-mix-${{ env.OTP_VERSION }}-${{ hashFiles('mix.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-mix-${{ env.OTP_VERSION }}-
 
       # Through the script, not `mix release standalone` directly: it
       # compiles the NIFs for the target into the directory the release
@@ -125,6 +129,7 @@ jobs:
     needs: build
     # Apple Silicon, which is what `macos-latest` means now.
     runs-on: macos-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
