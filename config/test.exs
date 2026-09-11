@@ -25,3 +25,8 @@ config :smm_monitor, SmmMonitor.Repo,
   pool_size: 5
 
 config :logger, level: :warning
+
+# The first-run wizard is for somebody who just downloaded a binary.
+# The suite is not that person: without this, every test that presses a
+# key would be pressing it into a setup screen.
+config :smm_monitor, setup_complete: true
