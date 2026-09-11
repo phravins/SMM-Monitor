@@ -18,7 +18,9 @@ defmodule SmmMonitor.TUI.Model do
   alias SmmMonitor.Client.AlertConfig
   alias SmmMonitor.Monitor
   alias SmmMonitor.Processing.Sentiment
+  alias SmmMonitor.Setup.Settings
   alias SmmMonitor.Trends
+  alias SmmMonitor.TUI.Setup
 
   @default_rows 12
   # An 80-column terminal, until one says otherwise.
@@ -45,6 +47,9 @@ defmodule SmmMonitor.TUI.Model do
             # which is not something to do on a single keystroke.
             confirm_remove: nil,
             flash: nil,
+            # The first-run wizard, or nil once it is done. Not a tab:
+            # it is the only thing on screen while it is on screen.
+            setup: nil,
             # Alerts raised recently, newest first. Shown as a banner.
             alerts: [],
             # Set when the user asks to quit; the app acts on it.
@@ -132,6 +137,7 @@ defmodule SmmMonitor.TUI.Model do
       clients: clients,
       client_id: Map.get(context, :client_id) || default_client_id(clients),
       mock_mode: SmmMonitor.config(:mock_mode, true),
+      setup: initial_setup(context),
       trend_window: Trends.default_window(),
       window_ms: SmmMonitor.config(:window_ms, :timer.hours(24))
     }
@@ -196,6 +202,16 @@ defmodule SmmMonitor.TUI.Model do
   captured by a text field.
   """
   @spec handle_key(t(), key()) :: t()
+  def handle_key(%__MODULE__{setup: %Setup{}} = model, key) do
+    setup = Setup.handle_key(model.setup, key)
+
+    if Setup.finished?(setup) do
+      apply_setup(%{model | setup: setup})
+    else
+      %{model | setup: setup}
+    end
+  end
+
   def handle_key(%__MODULE__{editing: field} = model, key) when not is_nil(field) do
     handle_edit_key(model, key)
   end
@@ -245,6 +261,17 @@ defmodule SmmMonitor.TUI.Model do
   def handle_key(%__MODULE__{tab: :config} = model, {:char, ?+}), do: start_adding(model)
   def handle_key(%__MODULE__{tab: :config} = model, {:char, ?p}), do: toggle_active(model)
   def handle_key(%__MODULE__{tab: :config} = model, {:char, ?s}), do: view_highlighted(model)
+
+  # `S` re-runs the first-run wizard, which is where API keys are typed
+  # in. Read-only sessions are refused: those keys are written to the
+  # host's disk, and a remote viewer has no business putting them there.
+  def handle_key(%__MODULE__{tab: :config, read_only: true} = model, {:char, ?S}) do
+    %{model | flash: {:error, "read-only session — setup runs on the host terminal"}}
+  end
+
+  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?S}) do
+    %{model | setup: Setup.new(), flash: nil}
+  end
 
   # `R` from anywhere: a report is about the client you are looking at,
   # and having to find the config screen first would be a detour through
@@ -459,6 +486,104 @@ defmodule SmmMonitor.TUI.Model do
   @doc "Whether the mentions list scrolls past the bottom of the table."
   @spec scrollable?(t()) :: boolean()
   def scrollable?(%__MODULE__{} = model), do: length(model.mentions) > model.rows
+
+  # --- the first-run wizard ---------------------------------------------------
+
+  # The client `SmmMonitor.Clients` seeds a fresh install with.
+  @placeholder_client "unassigned"
+
+  # Shown once, on a machine where nobody has configured anything yet.
+  # Never to a read-only SSH viewer: the wizard writes API keys to the
+  # host's disk, and a remote session should not be able to do that.
+  defp initial_setup(context) do
+    cond do
+      Map.get(context, :read_only, false) -> nil
+      Settings.complete?() -> nil
+      true -> Setup.new()
+    end
+  end
+
+  @doc "Where the wizard's answers are written, for the screen to show."
+  @spec settings_path(t()) :: String.t()
+  def settings_path(%__MODULE__{}), do: Settings.path()
+
+  @doc "Whether the first-run wizard is on screen."
+  @spec setup?(t()) :: boolean()
+  def setup?(%__MODULE__{setup: %Setup{}}), do: true
+  def setup?(%__MODULE__{}), do: false
+
+  # Saves what the wizard collected and opens the dashboard on it.
+  #
+  # Deliberately forgiving: a client that fails to save, or a settings
+  # file that can't be written, leaves a message on the dashboard rather
+  # than trapping somebody on a setup screen they have already filled in.
+  defp apply_setup(%__MODULE__{setup: setup} = model) do
+    credentials = Setup.credentials(setup)
+    saved = Settings.save(%{credentials: credentials, completed_at: DateTime.utc_now()})
+    Settings.merge(credentials)
+
+    model =
+      case Setup.brand(setup) do
+        nil -> model
+        brand -> adopt_brand(model, brand)
+      end
+
+    refresh(%{model | setup: nil, tab: :all, offset: 0, flash: setup_flash(setup, saved, model)})
+  end
+
+  # A fresh install already has one client, created from the default
+  # brand terms so the dashboard has something to show. The brand just
+  # typed in takes it over: two clients on a first run, one of them a
+  # placeholder nobody asked for, is a confusing way to start.
+  #
+  # Recognised by its id rather than by whether it has mentions — by the
+  # time somebody finishes reading the wizard, the mock fetchers have
+  # already collected a few. Only the seed creates a client under that
+  # id; anything added from the clients screen is slugged from its name.
+  # Taking it over renames rather than deletes, so whatever was
+  # collected stays where it is.
+  defp adopt_brand(%__MODULE__{} = model, brand) do
+    case Clients.list() do
+      [%Client{id: id} = only] when id == @placeholder_client -> replace(model, only, brand)
+      _clients -> add(model, brand)
+    end
+  end
+
+  defp replace(model, %Client{id: id}, brand) do
+    case Clients.update(id, %{name: brand, keywords: [brand]}) do
+      {:ok, client} -> %{model | client_id: client.id}
+      {:error, _reason} -> add(model, brand)
+    end
+  end
+
+  defp add(model, brand) do
+    case Clients.add(%{name: brand, keywords: [brand]}) do
+      {:ok, client} -> %{model | client_id: client.id}
+      {:error, _reason} -> model
+    end
+  end
+
+  defp setup_flash(setup, :ok, model) do
+    case Setup.live_platforms(setup) do
+      [] -> {:ok, demo_message(model)}
+      platforms -> {:ok, "watching #{watching(model)} · live: #{Enum.join(platforms, ", ")}"}
+    end
+  end
+
+  defp setup_flash(_setup, {:error, _reason}, _model) do
+    {:error, "couldn't save your settings — setup will ask again next time"}
+  end
+
+  defp demo_message(model) do
+    "watching #{watching(model)} · showing demo data until API keys are added (c then S)"
+  end
+
+  defp watching(model) do
+    case Enum.find(read_clients(), &(&1.id == model.client_id)) do
+      nil -> "the sample brand"
+      client -> client.name
+    end
+  end
 
   # --- the trends screen ----------------------------------------------------
 

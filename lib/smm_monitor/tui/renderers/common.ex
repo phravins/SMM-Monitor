@@ -53,7 +53,7 @@ defmodule SmmMonitor.TUI.Renderers.Common do
       alias SmmMonitor.Mention
       alias SmmMonitor.Processing.Sentiment
       alias SmmMonitor.Trends
-      alias SmmMonitor.TUI.{Chart, Model}
+      alias SmmMonitor.TUI.{Chart, Model, Setup}
 
       # Wide enough for the longest field label ("alert if sentiment"),
       # so no value starts flush against its own name.
@@ -73,6 +73,16 @@ defmodule SmmMonitor.TUI.Renderers.Common do
       @bold [attribute(:bold)]
 
       @impl true
+      def render(%Model{setup: %Setup{} = setup} = model) do
+        view(top_bar: setup_top_bar(), bottom_bar: setup_bottom_bar(setup)) do
+          row do
+            column(size: 12) do
+              setup_panel(model, setup)
+            end
+          end
+        end
+      end
+
       def render(%Model{tab: :config} = model) do
         view(top_bar: top_bar(model), bottom_bar: bottom_bar(model)) do
           row do
@@ -350,6 +360,93 @@ defmodule SmmMonitor.TUI.Renderers.Common do
             )
           end
         end
+      end
+
+      # --- the first-run wizard ---------------------------------------------------
+
+      defp setup_top_bar do
+        bar do
+          label do
+            text(content: " SMM MONITOR ", color: @accent, attributes: @bold)
+            text(content: "· first-run setup", color: @muted)
+          end
+        end
+      end
+
+      defp setup_bottom_bar(setup) do
+        bar do
+          label do
+            text(content: " #{Setup.hint(setup)}", color: @muted)
+          end
+        end
+      end
+
+      defp setup_panel(model, setup) do
+        {step, total} = Setup.position(setup)
+
+        panel(title: "setup · step #{step} of #{total}", height: :fill, padding: 1) do
+          [
+            label(content: ""),
+            label do
+              text(content: Setup.title(setup), color: @accent, attributes: @bold)
+            end,
+            label(content: ""),
+            Enum.map(Setup.description(setup), &label(content: "  " <> &1)),
+            setup_body(model, setup),
+            setup_error(setup)
+          ]
+        end
+      end
+
+      defp setup_body(model, %Setup{step: :review} = setup) do
+        [
+          label(content: ""),
+          Enum.map(Setup.summary(setup), &summary_line/1),
+          label(content: ""),
+          label do
+            text(content: "  Your answers are saved to ", color: @muted)
+            text(content: Model.settings_path(model), color: @muted, attributes: @bold)
+          end
+        ]
+      end
+
+      defp setup_body(_model, setup) do
+        [
+          label(content: ""),
+          label do
+            text(content: "  #{Setup.label(setup)}", color: @muted)
+          end,
+          label do
+            text(content: "  > ", color: @accent, attributes: @bold)
+            text(content: Setup.value(setup), attributes: @bold)
+            # A block for a cursor: termbox gives us no real one inside a
+            # panel, and an empty field should still look like a field.
+            text(content: "█", color: @accent)
+          end
+        ]
+      end
+
+      # The demo-data warning is the one line on this screen that must
+      # not be skimmed past, so it gets the colour everything else on the
+      # screen doesn't.
+      defp summary_line("No API keys, so every mention you see will be DEMO DATA —" = line) do
+        label do
+          text(content: "  " <> line, color: @accent, attributes: @bold)
+        end
+      end
+
+      defp summary_line(line), do: label(content: "  " <> line)
+
+      defp setup_error(%Setup{error: nil}), do: label(content: "")
+
+      defp setup_error(%Setup{error: message}) do
+        [
+          label(content: ""),
+          label do
+            text(content: "  ! ", color: @negative, attributes: @bold)
+            text(content: message, color: @negative)
+          end
+        ]
       end
 
       # --- trends screen: the last N days ---------------------------------------

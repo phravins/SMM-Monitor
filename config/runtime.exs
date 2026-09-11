@@ -67,8 +67,11 @@ config :smm_monitor,
   keywords: RC.list("SMM_KEYWORDS", ["realoffice", "real office"]),
   poll_interval_ms: RC.integer("SMM_POLL_INTERVAL_MS", 30_000),
   max_mentions: RC.integer("SMM_MAX_MENTIONS", 2_000),
-  # `SMM_TUI=1 mix run --no-halt` starts the dashboard from the app itself.
-  start_tui: RC.bool("SMM_TUI", false)
+  # `SMM_TUI=1 mix run --no-halt` starts the dashboard from the app
+  # itself. The downloaded binary defaults to showing it: that is the
+  # whole reason somebody ran it. Everything else stays headless, so the
+  # test suite and `mix run` never fight the terminal for stdout.
+  start_tui: RC.bool("SMM_TUI", System.get_env("__BURRITO") == "1")
 
 # Where collected mentions are stored, and how long they are kept.
 #

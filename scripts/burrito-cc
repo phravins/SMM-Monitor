@@ -1,0 +1,57 @@
+#!/bin/sh
+#
+# A `zig cc` that waf can link with.
+#
+# Burrito rebuilds every elixir_make NIF with `zig cc` when it packages a
+# release, so the native code matches the Erlang runtime it bundles.
+# That works for exqlite. It does not work for ex_termbox, whose vendored
+# copy of termbox is built by waf: waf writes a shared library's soname
+# the GNU ld way, `-Wl,-h,libtermbox.so.1.0.0`, and zig's linker rejects
+# the flag outright —
+#
+#     error: unsupported linker arg: -h
+#
+# — which fails the whole build, and with it the Linux binary.
+#
+# Both spellings mean the same thing, so this rewrites `-h` to `-soname`
+# on its way past. Targeting macOS, waf trips over a second one: it
+# passes `-compatibility_version 1`, and zig wants a full `1.0.0`.
+#
+# Everything else goes to zig unchanged. Burrito points CC here through
+# the `nif_env` qualifier in mix.exs.
+#
+# BURRITO_CC_TARGET is the zig target triple (e.g. x86_64-linux); the
+# remaining flags mirror the ones Burrito itself passes.
+set -e
+
+target="${BURRITO_CC_TARGET:-x86_64-linux}"
+
+args=""
+
+for arg in "$@"; do
+  case "$arg" in
+    -Wl,-h,*)
+      # waf's GNU spelling of soname; zig's linker only knows -soname.
+      arg="-Wl,-soname,${arg#-Wl,-h,}"
+      ;;
+    -Wl,-compatibility_version,* | -Wl,-current_version,*)
+      # Targeting macOS, waf passes a bare major ("1"); zig insists on
+      # the full "1.0.0".
+      flag="${arg%,*}"
+      version="${arg##*,}"
+
+      case "$version" in
+        *.*.*) : ;;
+        *.*) version="$version.0" ;;
+        *) version="$version.0.0" ;;
+      esac
+
+      arg="$flag,$version"
+      ;;
+  esac
+
+  # Re-quote: paths from waf and elixir_make can contain spaces.
+  args="$args \"$(printf '%s' "$arg" | sed 's/"/\\"/g')\""
+done
+
+eval exec zig cc -target "$target" -O2 -dynamic -shared -Wl,-undefined=dynamic_lookup $args

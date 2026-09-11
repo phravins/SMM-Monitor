@@ -28,64 +28,51 @@ client can actually be handed.
 
 ## Quick start
 
-Mock mode is the default, so this works with no API keys at all:
+**macOS or Linux** — paste this into a terminal:
 
 ```sh
-mix deps.get
-mix smm.tui
+curl -fsSL https://raw.githubusercontent.com/phravins/SMM-Monitor/main/scripts/install.sh | sh
 ```
 
-You'll get a populated, moving dashboard built from fixtures. Press `q` to
-quit.
+**Windows** — paste this into PowerShell:
 
-### Requirements
+```powershell
+iwr -useb https://raw.githubusercontent.com/phravins/SMM-Monitor/main/scripts/install.ps1 | iex
+```
 
-* Elixir ~> 1.15 with OTP 25+
-* A C toolchain (`build-essential`) and `erlang-dev` — Ratatouille compiles
-  a termbox NIF on install
+Then run it:
+
+```sh
+smm-monitor
+```
+
+and answer the two or three questions it asks on screen. That's it —
+there is nothing to install first, nothing to edit, and no API key
+needed to look around. Skip the keys and you get a working dashboard
+full of demo data; add them later from the dashboard itself, whenever
+you have them.
 
 <details>
-<summary>If <code>mix deps.compile</code> fails on ex_termbox</summary>
+<summary>What the installer actually does</summary>
 
-The bundled termbox builds with waf 2.0.14, which uses a file mode (`rU`)
-that Python 3.11 removed. If you see `ValueError: invalid mode: 'rUb'`,
-either build with an older Python or patch the vendored copy:
+Works out whether you're on macOS or Linux and which chip you have,
+downloads the one file that matches from the latest release, and puts it
+in `~/.local/bin`. No admin rights, nothing installed system-wide, and
+uninstalling is `rm ~/.local/bin/smm-monitor`.
 
-```sh
-sed -i "s/def readf(fname,m='r',encoding='latin-1'):/&\n\tm=m.replace('U','')/" \
-  deps/ex_termbox/c_src/termbox/.waf3-*/waflib/Utils.py
-mix deps.compile ex_termbox
-```
+The binary carries its own copy of the Erlang runtime — about 17 MB —
+which is why you don't have to install anything else.
 
-This is an upstream packaging issue, not a problem with this project.
+On Windows it installs into WSL, because the dashboard is drawn with a
+POSIX terminal library that has no Windows build. The script checks
+whether you have WSL and tells you the one command that sets it up if
+you don't. Use **Windows Terminal** rather than the old console window:
+conhost draws the dashboard's box characters as literal boxes.
+
+Prefer to pick the file yourself? They're on the
+[releases page](https://github.com/phravins/SMM-Monitor/releases), one
+per operating system and chip.
 </details>
-
-## Running it
-
-| Command | What it does |
-| --- | --- |
-| `mix smm.tui` | Starts the supervision tree and the dashboard. The usual way. |
-| `SMM_TUI=1 mix run --no-halt` | Same thing via the app's own config flag. |
-| `mix run --no-halt` | Runs the fetchers and processing layer headless, no UI. |
-| `./scripts/build_release.sh` | Builds a self-contained release and packages it (see [DEPLOY.md](DEPLOY.md)). |
-| `mix test` | The test suite (no fetchers, no TUI — see `config/test.exs`). |
-
-To run it as a background service on a server — systemd unit, dedicated
-user, env file for secrets — see **[DEPLOY.md](DEPLOY.md)**. The release
-bundles the Erlang runtime, so the target needs neither Elixir nor
-Erlang installed.
-
-To just run a release locally with the dashboard attached:
-
-```sh
-./scripts/build_release.sh --no-tar
-SMM_TUI=1 _build/prod/rel/smm_monitor/bin/smm_monitor start
-```
-
-There's deliberately no escript: Ratatouille's termbox NIF can't be loaded
-out of an escript archive, so the binary would start and immediately fail
-on `ExTermbox.Bindings.init/0`. A release keeps the NIF in a real `priv`
-directory and works.
 
 ### Keyboard shortcuts
 
@@ -106,10 +93,29 @@ directory and works.
 
 On the clients screen, `j`/`k` move between clients, `h`/`l` between a
 client's fields, `e` or `Enter` starts editing, `+` adds a client, `d`
-removes one (twice — it asks first), `p` pauses one, and `s` switches the
-dashboard to it. **While you're editing every key is typed**, including
-`q` and the tab letters — so a brand term like "quality" or "clarity"
-goes in fine. `Ctrl-C` always quits.
+removes one (twice — it asks first), `p` pauses one, `s` switches the
+dashboard to it, and `S` runs the first-run setup again — which is where
+you add API keys later. **While you're editing every key is typed**,
+including `q` and the tab letters — so a brand term like "quality" or
+"clarity" goes in fine. `Ctrl-C` always quits.
+
+### First run, and doing it again
+
+The first launch asks what to watch and, optionally, for Reddit and
+YouTube keys. Everything is skippable: `Esc` on the first question means
+"show me demo data", `Esc` on a key means "not now". Without keys the
+dashboard works exactly as it will with them — the mentions are just
+invented rather than collected, which the setup screen says in as many
+words.
+
+Answers are saved to `~/.config/smm_monitor/settings.json`, readable
+only by you, and the wizard never asks again. To change them, press `c`
+then `S`. Keys you add take effect on the next poll; there is nothing to
+restart.
+
+Three things count as "already set up", so the wizard never appears on a
+server or in a script: credentials in the environment, systemd's
+`STATE_DIRECTORY`, or `SMM_SETUP_COMPLETE=1`.
 
 ## Monitoring several clients
 
@@ -905,6 +911,125 @@ week's report. One client's report failing doesn't stop the others.
 Nothing is emailed anywhere: the files land in a directory, and what
 happens to them next is a human decision.
 
+# Advanced — running from source, and on a server
+
+Everything above is the downloaded binary on somebody's laptop. The rest
+of this README is the other two ways to run it: from a checkout while
+you are working on it, and as a service on a server your team connects
+to over SSH. Neither changed when the binary arrived, and neither needs
+it.
+
+## Running from source
+
+Mock mode is the default, so this works with no API keys at all:
+
+```sh
+mix deps.get
+mix smm.tui
+```
+
+You'll get a populated, moving dashboard built from fixtures. Press `q` to
+quit.
+
+### Requirements
+
+* Elixir ~> 1.15 with OTP 25+
+* A C toolchain (`build-essential`) and `erlang-dev` — Ratatouille compiles
+  a termbox NIF on install
+
+<details>
+<summary>If <code>mix deps.compile</code> fails on ex_termbox</summary>
+
+The bundled termbox builds with waf 2.0.14, which uses a file mode (`rU`)
+that Python 3.11 removed. If you see `ValueError: invalid mode: 'rUb'`,
+either build with an older Python or patch the vendored copy:
+
+```sh
+sed -i "s/def readf(fname,m='r',encoding='latin-1'):/&\n\tm=m.replace('U','')/" \
+  deps/ex_termbox/c_src/termbox/.waf3-*/waflib/Utils.py
+mix deps.compile ex_termbox
+```
+
+This is an upstream packaging issue, not a problem with this project.
+</details>
+
+### The commands
+
+| Command | What it does |
+| --- | --- |
+| `mix smm.tui` | Starts the supervision tree and the dashboard. The usual way. |
+| `SMM_TUI=1 mix run --no-halt` | Same thing via the app's own config flag. |
+| `mix run --no-halt` | Runs the fetchers and processing layer headless, no UI. |
+| `./scripts/build_release.sh` | Builds a self-contained release and packages it (see [DEPLOY.md](DEPLOY.md)). |
+| `mix test` | The test suite (no fetchers, no TUI — see `config/test.exs`). |
+
+To run it as a background service on a server — systemd unit, dedicated
+user, env file for secrets — see **[DEPLOY.md](DEPLOY.md)**. The release
+bundles the Erlang runtime, so the target needs neither Elixir nor
+Erlang installed.
+
+To just run a release locally with the dashboard attached:
+
+```sh
+./scripts/build_release.sh --no-tar
+SMM_TUI=1 _build/prod/rel/smm_monitor/bin/smm_monitor start
+```
+
+There's deliberately no escript: Ratatouille's termbox NIF can't be loaded
+out of an escript archive, so the binary would start and immediately fail
+on `ExTermbox.Bindings.init/0`. A release keeps the NIF in a real `priv`
+directory and works.
+
+## Building the downloadable binaries
+
+The binaries in the Quick Start are built by
+[Burrito](https://github.com/burrito-elixir/burrito), which wraps a
+release — BEAM code, the Erlang runtime, both native NIFs — into one
+file. Tagging a version builds all four and attaches them to a GitHub
+Release; `.github/workflows/release.yml` is the whole pipeline.
+
+To build one yourself you need `zig` and `xz` on PATH:
+
+```sh
+scripts/build-standalone.sh linux        # or linux_arm, macos, macos_intel
+```
+
+All four cross-build from one Linux machine — that is Burrito's trick —
+and land in `burrito_out/`.
+
+Use the script rather than `mix release standalone`. Burrito rebuilds
+NIFs for the target it is packaging and expects them in
+`$MIX_APP_PATH/priv`, which exqlite honours and ex_termbox (which
+predates the convention) does not. Left to itself, the Linux binary ends
+up carrying a glibc library inside a musl runtime and dies on startup
+with `__snprintf_chk: symbol not found`. The script compiles the NIFs
+for the target first, where the release will actually find them, and
+puts the native ones back afterwards.
+
+### Why there is no Windows .exe
+
+The dashboard is drawn with Ratatouille, which draws with termbox, which
+is POSIX — `termios`, `select`, and:
+
+```
+termbox.c:9:10: fatal error: 'sys/select.h' file not found
+```
+
+That is not a toolchain problem with a flag to fix. A Windows build
+would produce an executable that starts, finds nothing to draw with, and
+shows an empty window — so the Windows installer sets it up in WSL
+instead, where it is the Linux build and works normally. If termbox ever
+learns to speak to the Windows console, one line in `mix.exs` is the
+whole change.
+
+### The macOS binaries are not signed
+
+macOS may refuse to run a downloaded binary from an unidentified
+developer. Files fetched with `curl` aren't quarantined, so the
+installer's binaries run without argument; one downloaded through a
+browser needs `xattr -d com.apple.quarantine ~/.local/bin/smm-monitor`
+or a trip through System Settings → Privacy & Security.
+
 ## Remote access over SSH
 
 Anyone on the team can view the live dashboard from their own terminal,
@@ -1558,6 +1683,8 @@ source failed counts as an error.
 | `SMM_ALERT_WEBHOOK_URL` | Global Slack incoming webhook for alerts |
 | `SMM_ALERTS_ENABLED` | Set `false` to switch the alert engine off entirely |
 | `SMM_ALERT_BASELINE_DAYS` | Days of same-hour history behind the volume baseline (default 7) |
+| `SMM_SETTINGS_FILE` | Where the first-run wizard's answers are saved |
+| `SMM_SETUP_COMPLETE` | Set to skip the first-run wizard entirely (scripts, CI) |
 | `SMM_REPORTS_DIR` | Where generated reports are written (default: `reports` beside the database) |
 | `SMM_WEEKLY_REPORTS` | Set `true` to write a weekly report per active client (default false) |
 | `SMM_WEEKLY_REPORT_DAY` | Day of the week to write them, 1 = Monday (default 1) |
@@ -1952,3 +2079,12 @@ Reddit subreddit list is its own.
 * The trends screen reads the database only. With persistence switched
   off it has nothing to show, and says so in its footer rather than
   drawing an empty chart.
+* **Windows runs it through WSL**, not natively — termbox has no
+  Windows build, and that is the honest workaround rather than an
+  oversight. Use Windows Terminal; conhost renders the dashboard's block
+  characters as boxes.
+* The macOS binaries are unsigned and unnotarised. A browser download
+  needs the quarantine attribute removed; the installer's doesn't.
+* Upgrading means running the install command again. The binary unpacks
+  itself under `~/.local/share/.burrito` keyed by version, so a new
+  version unpacks fresh and the old one is cleaned up.
