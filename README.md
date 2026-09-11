@@ -57,8 +57,14 @@ you have them.
 
 Works out whether you're on macOS or Linux and which chip you have,
 downloads the one file that matches from the latest release, and puts it
-in `~/.local/bin`. No admin rights, nothing installed system-wide, and
-uninstalling is `rm ~/.local/bin/smm-monitor`.
+in `~/.local/bin`. No admin rights and nothing installed system-wide.
+
+To uninstall, delete the binary and the copy it unpacked:
+
+```sh
+rm ~/.local/bin/smm-monitor
+smm-monitor maintenance uninstall   # or: rm -rf ~/.local/share/.burrito
+```
 
 The binary carries its own copy of the Erlang runtime — about 17 MB —
 which is why you don't have to install anything else.
@@ -73,6 +79,34 @@ Prefer to pick the file yourself? They're on the
 [releases page](https://github.com/phravins/SMM-Monitor/releases), one
 per operating system and chip.
 </details>
+
+### If the dashboard doesn't appear
+
+Run `smm-monitor` and get an error instead of a dashboard? It will
+normally tell you what to do. The one worth knowing about in advance:
+
+> SMM Monitor could not start the dashboard.
+
+The binary carries its runtime compressed inside it and unpacks it on
+first run into `~/.local/share/.burrito/` (on macOS, `~/Library/Application
+Support/.burrito/`). It only unpacks once per version — so if that copy
+is stale, from an earlier build of the same version, it is reused
+forever, and **downloading the app again does not replace it**. Delete
+it and start the app again:
+
+```sh
+rm -rf ~/.local/share/.burrito
+smm-monitor
+```
+
+Only the unpacked program lives there; your clients, mentions and
+settings are stored elsewhere and are untouched. Re-running the
+installer now does this for you.
+
+A blank screen or boxes drawn as `?` is a different problem: the
+terminal, not the app. On Windows use Windows Terminal rather than the
+old console window, and see [Terminal size](#terminal-size) if the
+dashboard looks cramped.
 
 ### Keyboard shortcuts
 
