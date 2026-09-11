@@ -91,11 +91,12 @@ jobs:
 
       - run: mix deps.get
 
+      # Through the script, not `mix release standalone` directly: it
+      # compiles the NIFs for the target into the directory the release
+      # copies from. Without it the binary carries the host's libraries
+      # and dies on startup — see the comment at the top of the script.
       - name: Build ${{ matrix.target }}
-        env:
-          MIX_ENV: prod
-          BURRITO_TARGET: ${{ matrix.target }}
-        run: mix release standalone --overwrite
+        run: ./scripts/build-standalone.sh ${{ matrix.target }}
 
       - name: Name it what people download
         run: |
