@@ -53,7 +53,7 @@ defmodule SmmMonitor.TUI.Chart do
       iex> days = [%{date: ~D[2026-09-09], count: 4}, %{date: ~D[2026-09-10], count: 0},
       ...>         %{date: ~D[2026-09-11], count: 2}]
       iex> Chart.volume(days, height: 2) |> Enum.map(&(&1.label <> &1.bars))
-      ["  4 ┤██      ", "    ┤██    ██", "  0 └─────────", "    9 Sep 11 Sep"]
+      ["  4 ┤█    ", "    ┤█   █", "  0 └─────", "    9 Sep 11 Sep"]
 
   The tallest column is the window's busiest day, so the chart always
   fills its height — the shape is the point, not the absolute height,
@@ -93,7 +93,7 @@ defmodule SmmMonitor.TUI.Chart do
       iex> days = [%{date: ~D[2026-09-10], count: 3, average: 0.8},
       ...>         %{date: ~D[2026-09-11], count: 2, average: -0.4}]
       iex> Chart.sentiment(days, height: 1) |> Enum.map(&{&1.style, &1.label <> &1.bars})
-      [{:positive, " +1 ┤██   "}, {:axis, "  0 ┼─────"}, {:negative, " -1 ┤   ██"},
+      [{:positive, " +1 ┤█  "}, {:axis, "  0 ┼───"}, {:negative, " -1 ┤  ▀"},
        {:muted, "    10 Sep 11 Sep"}]
   """
   @spec sentiment([Trends.day()], keyword()) :: [row()]
@@ -155,8 +155,12 @@ defmodule SmmMonitor.TUI.Chart do
   end
 
   # Two levels per row: `█` is both halves, `▄` the lower one.
-  defp level(0, _max, _height), do: 0
-  defp level(+0.0, _max, _height), do: 0
+  #
+  # Compared rather than matched, because a day averaging exactly zero
+  # arrives here as -0.0 as often as 0.0 — the sentiment chart gets it
+  # from negating its own positive half — and a pattern that catches one
+  # but not the other would draw a phantom bar under half the flat days.
+  defp level(value, _max, _height) when value <= 0, do: 0
 
   defp level(value, max, height) do
     levels = height * 2
@@ -226,20 +230,27 @@ defmodule SmmMonitor.TUI.Chart do
     first = days |> List.first() |> label_for()
     last = days |> List.last() |> label_for()
 
-    bars =
-      if length(days) >= 10 do
-        middle = days |> Enum.at(div(length(days), 2)) |> label_for()
-
-        first
-        |> pad_to(div(span, 2) - div(String.length(middle), 2))
-        |> Kernel.<>(middle)
-        |> pad_to(span - String.length(last))
-        |> Kernel.<>(last)
-      else
-        first |> pad_to(span - String.length(last)) |> Kernel.<>(last)
-      end
+    bars = date_labels(days, first, last, span, width)
 
     %{label: "    ", bars: bars, style: :muted}
+  end
+
+  defp date_labels(days, first, last, span, width)
+
+  defp date_labels(_days, same, same, _span, _width), do: same
+
+  defp date_labels(days, first, last, span, _width) do
+    if length(days) >= 10 do
+      middle = days |> Enum.at(div(length(days), 2)) |> label_for()
+
+      first
+      |> pad_to(div(span, 2) - div(String.length(middle), 2))
+      |> Kernel.<>(middle)
+      |> pad_to(span - String.length(last))
+      |> Kernel.<>(last)
+    else
+      first |> pad_to(span - String.length(last)) |> Kernel.<>(last)
+    end
   end
 
   defp label_for(%{date: date}), do: Calendar.strftime(date, "%-d %b")

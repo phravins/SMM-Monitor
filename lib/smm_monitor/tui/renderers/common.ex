@@ -359,6 +359,7 @@ defmodule SmmMonitor.TUI.Renderers.Common do
         trends = model.trends
         {volume_height, sentiment_height} = Model.trend_chart_heights(model)
         width = Model.trend_column_width(model)
+        days = Model.trend_days(model)
 
         panel(
           title: "#{Model.trend_window_label(model)} · #{client_name(model)}",
@@ -368,12 +369,12 @@ defmodule SmmMonitor.TUI.Renderers.Common do
           [
             trends_headline(trends),
             label(content: ""),
-            chart_heading("mentions per day", volume_note(trends)),
-            Enum.map(Chart.volume(trends.days, height: volume_height, width: width), &chart_line/1),
+            chart_heading("mentions per day", volume_note(model, trends)),
+            Enum.map(Chart.volume(days, height: volume_height, width: width), &chart_line/1),
             label(content: ""),
             chart_heading("average sentiment per day", sentiment_note(trends)),
             Enum.map(
-              Chart.sentiment(trends.days, height: sentiment_height, width: width),
+              Chart.sentiment(days, height: sentiment_height, width: width),
               &chart_line/1
             )
           ]
@@ -417,10 +418,27 @@ defmodule SmmMonitor.TUI.Renderers.Common do
         end
       end
 
-      defp volume_note(%Trends{busiest: nil}), do: ""
+      # The narrower note goes first: on the terminal that needs it, the
+      # end of the line is the part that gets clipped away.
+      defp volume_note(model, trends) do
+        [narrow_note(model), busiest_note(trends)]
+        |> Enum.reject(&(&1 == ""))
+        |> Enum.join(" · ")
+      end
 
-      defp volume_note(%Trends{busiest: day}) do
+      defp busiest_note(%Trends{busiest: nil}), do: ""
+
+      defp busiest_note(%Trends{busiest: day}) do
         "busiest #{day_label(day.date)} · #{day.count} mention(s)"
+      end
+
+      # Better to say the oldest days were left off than to let the
+      # renderer clip the right-hand end, which is where this week is.
+      defp narrow_note(model) do
+        case Model.trend_days_dropped(model) do
+          0 -> ""
+          dropped -> "#{dropped} older day(s) need a wider terminal"
+        end
       end
 
       defp sentiment_note(%Trends{best: nil}), do: ""

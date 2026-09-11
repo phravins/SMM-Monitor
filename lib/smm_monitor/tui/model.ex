@@ -480,6 +480,28 @@ defmodule SmmMonitor.TUI.Model do
   end
 
   @doc """
+  The days of the window this terminal has room to draw.
+
+  A month needs sixty columns at its narrowest, and not every terminal
+  has them. Rather than let the renderer clip the chart — which would
+  quietly cut off the right-hand end, where the most recent days are —
+  the oldest days are dropped and the screen says so.
+  """
+  @spec trend_days(t()) :: [Trends.day()]
+  def trend_days(%__MODULE__{} = model) do
+    # One character per bar and one between: n columns need 2n - 1.
+    room = model |> trend_span() |> Kernel.+(1) |> div(2) |> max(3)
+
+    Enum.take(model.trends.days, -room)
+  end
+
+  @doc "How many days of the chosen window had to be left off, if any."
+  @spec trend_days_dropped(t()) :: non_neg_integer()
+  def trend_days_dropped(%__MODULE__{} = model) do
+    length(model.trends.days) - length(trend_days(model))
+  end
+
+  @doc """
   How wide one day's column can be drawn in this terminal.
 
   A fortnight of single-character bars on a wide terminal looks like a
@@ -488,14 +510,19 @@ defmodule SmmMonitor.TUI.Model do
   whatever the window can spare, between one character and four.
   """
   @spec trend_column_width(t()) :: pos_integer()
-  def trend_column_width(%__MODULE__{trends: %{days: []}}), do: 1
+  def trend_column_width(%__MODULE__{} = model) do
+    case length(trend_days(model)) do
+      0 ->
+        1
 
-  def trend_column_width(%__MODULE__{columns: columns, trends: %{days: days}}) do
-    # The axis label on the left, and the panel's own borders.
-    available = max(columns - 10, 10)
-
-    available |> div(length(days)) |> Kernel.-(1) |> max(1) |> min(4)
+      days ->
+        model |> trend_span() |> Kernel.+(1) |> div(days) |> Kernel.-(1) |> max(1) |> min(4)
+    end
   end
+
+  # The room left for bars once the axis label and the panel's borders
+  # have taken theirs.
+  defp trend_span(%__MODULE__{columns: columns}), do: max(columns - 10, 10)
 
   @doc """
   Where this screen's numbers come from, for the footer.
