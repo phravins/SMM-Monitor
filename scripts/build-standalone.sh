@@ -109,6 +109,12 @@ unset CC BURRITO_CC_TARGET
 echo "==> packaging $TARGET"
 mix release standalone --overwrite
 
+# Before anybody downloads it. A NIF built for the host rather than the
+# target produces a binary that assembles cleanly, starts normally, and
+# then cannot draw its dashboard — which is precisely how a broken
+# v0.1.0 Linux binary came to exist.
+scripts/check-nifs.sh "$TARGET"
+
 binary="burrito_out/standalone_${TARGET}"
 
 if [ ! -f "$binary" ]; then

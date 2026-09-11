@@ -22,6 +22,7 @@ on:
       - "mix.lock"
       - "scripts/build-standalone.sh"
       - "scripts/burrito-cc"
+      - "scripts/check-nifs.sh"
       - ".github/workflows/release.yml"
       - ".github/scripts/smoke-test.sh"
   # Cutting a release from the Actions tab, for anyone who can't push a
@@ -119,10 +120,19 @@ jobs:
           file "dist/${{ matrix.asset }}"
           ls -lh "dist/${{ matrix.asset }}"
 
+      # Every target gets its native libraries checked, executable here
+      # or not: the build script does it, and this repeats it so the step
+      # that failed is obvious in the log rather than buried in the
+      # build's output.
+      - name: Check the native libraries match the target
+        run: ./scripts/check-nifs.sh ${{ matrix.target }}
+
       # The x86_64 Linux binary is the only one this runner can execute,
       # so it is the only one that can be proved here rather than merely
-      # built. The macOS binary gets the same treatment in `smoke-macos`.
-      - name: Run it
+      # built — and proving it means starting the dashboard, not just the
+      # application. The macOS binary gets the same treatment in
+      # `smoke-macos`.
+      - name: Run it, and draw the dashboard
         if: matrix.target == 'linux'
         run: ./.github/scripts/smoke-test.sh "dist/${{ matrix.asset }}"
 
@@ -147,7 +157,7 @@ jobs:
           name: smm-monitor-macos-arm64
           path: dist
 
-      - name: Run it
+      - name: Run it, and draw the dashboard
         run: |
           chmod +x dist/smm-monitor-macos-arm64
           ./.github/scripts/smoke-test.sh dist/smm-monitor-macos-arm64
