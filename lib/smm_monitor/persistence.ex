@@ -16,7 +16,7 @@ defmodule SmmMonitor.Persistence do
   require Logger
 
   alias SmmMonitor.Mention
-  alias SmmMonitor.Persistence.MentionRecord
+  alias SmmMonitor.Persistence.{AlertRecord, MentionRecord}
   alias SmmMonitor.Repo
 
   @doc """
@@ -165,6 +165,99 @@ defmodule SmmMonitor.Persistence do
     :exit, reason ->
       Logger.warning("database: could not read sentiment history (#{inspect(reason)})")
       empty_counts()
+  end
+
+  @doc """
+  Records an alert, so it survives the process that raised it.
+
+  Fire and forget: a failed write is logged and swallowed. An alert that
+  reached Slack has done its job, and losing its history row is not a
+  reason to crash the alerting process.
+  """
+  @spec store_alert(SmmMonitor.Alerts.Alert.t(), keyword()) :: :ok
+  def store_alert(alert, opts \\ []) do
+    repo = Keyword.get(opts, :repo, Repo)
+    repo.insert_all(AlertRecord, [AlertRecord.from_alert(alert)])
+    :ok
+  rescue
+    error ->
+      Logger.warning("database: could not record an alert (#{inspect(error)})")
+      :ok
+  catch
+    :exit, reason ->
+      Logger.warning("database: could not record an alert (#{inspect(reason)})")
+      :ok
+  end
+
+  @doc """
+  Stored alerts for a client between two timestamps, newest first.
+
+  Returns the rows rather than rebuilt `Alert` structs: a report shows
+  the message as it was sent, and re-deriving the wording would make old
+  alerts silently change when the phrasing improves.
+  """
+  @spec alerts_between(DateTime.t(), DateTime.t(), keyword()) :: [AlertRecord.t()]
+  def alerts_between(from, to, opts \\ []) do
+    repo = Keyword.get(opts, :repo, Repo)
+
+    AlertRecord
+    |> where([a], a.raised_at >= ^from and a.raised_at <= ^to)
+    |> client_filter(Keyword.get(opts, :client, :all))
+    |> order_by([a], desc: a.raised_at)
+    |> repo.all()
+  rescue
+    error ->
+      Logger.warning("database: could not read alert history (#{inspect(error)})")
+      []
+  catch
+    :exit, reason ->
+      Logger.warning("database: could not read alert history (#{inspect(reason)})")
+      []
+  end
+
+  @doc """
+  Whether any alert has ever been recorded.
+
+  What tells a report the difference between "alerting is running and
+  nothing happened" and "alerting was never on for this period" — two
+  facts that look identical from an empty list.
+  """
+  @spec any_alerts?(keyword()) :: boolean()
+  def any_alerts?(opts \\ []) do
+    repo = Keyword.get(opts, :repo, Repo)
+    repo.aggregate(AlertRecord, :count) > 0
+  rescue
+    _error -> false
+  catch
+    :exit, _reason -> false
+  end
+
+  @doc """
+  Every mention for a client between two timestamps, newest first.
+
+  Used by reporting, which needs the whole period rather than "the most
+  recent N" — a report that quietly dropped the oldest day of a week
+  would be wrong in a way nobody could see.
+  """
+  @spec between(DateTime.t(), DateTime.t(), keyword()) :: [Mention.t()]
+  def between(from, to, opts \\ []) do
+    repo = Keyword.get(opts, :repo, Repo)
+
+    MentionRecord
+    |> where([m], m.source_timestamp >= ^from and m.source_timestamp <= ^to)
+    |> platform_filter(Keyword.get(opts, :platform, :all))
+    |> client_filter(Keyword.get(opts, :client, :all))
+    |> order_by([m], desc: m.source_timestamp)
+    |> repo.all()
+    |> Enum.map(&MentionRecord.to_mention/1)
+  rescue
+    error ->
+      Logger.warning("database: could not read the report period (#{inspect(error)})")
+      []
+  catch
+    :exit, reason ->
+      Logger.warning("database: could not read the report period (#{inspect(reason)})")
+      []
   end
 
   @doc """

@@ -11,6 +11,7 @@ defmodule SmmMonitor.Application do
       ├── SmmMonitor.Clients                 — the clients being monitored
       ├── SmmMonitor.Processing.Processor    — ETS owner + aggregation
       ├── SmmMonitor.Alerts                  — sentiment, volume and phrases
+      ├── SmmMonitor.Reports.Scheduler       — weekly client reports, when enabled
       ├── SmmMonitor.SSH.Server              — remote dashboard, when enabled
       ├── SmmMonitor.Fetchers.Supervisor     — one child supervisor per platform
       │   ├── PlatformSupervisor(:reddit)    — Worker(:reddit)
@@ -42,6 +43,7 @@ defmodule SmmMonitor.Application do
         [SmmMonitor.Clients] ++
         [SmmMonitor.Processing.Processor] ++
         alert_children() ++
+        report_children() ++
         ssh_children() ++
         fetcher_children() ++
         tui_children()
@@ -72,6 +74,17 @@ defmodule SmmMonitor.Application do
   defp writer_children do
     if SmmMonitor.config(:persist_writes, true) do
       [SmmMonitor.Persistence.Writer, SmmMonitor.Persistence.Retention]
+    else
+      []
+    end
+  end
+
+  # Weekly reports read the durable log and write files, so they start
+  # after persistence. Off by default: a process that writes files
+  # unprompted should be something you switched on.
+  defp report_children do
+    if SmmMonitor.Reports.Scheduler.enabled?() do
+      [SmmMonitor.Reports.Scheduler]
     else
       []
     end

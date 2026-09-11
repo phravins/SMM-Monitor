@@ -14,7 +14,7 @@ defmodule SmmMonitor.Alerts.EngineTest do
   alias SmmMonitor.Alerts
   alias SmmMonitor.Alerts.Alert
   alias SmmMonitor.Client.AlertConfig
-  alias SmmMonitor.{Client, Clients, Mention, Monitor}
+  alias SmmMonitor.{Client, Clients, Monitor}
 
   defmodule CollectingNotifier do
     @moduledoc false

@@ -369,7 +369,17 @@ defmodule SmmMonitor.Alerts do
   # Each channel is called inside its own try: one broken notifier must
   # not stop the alert reaching the others.
   defp notify(alert) do
+    # Recorded before the channels are called: the history should hold
+    # what was raised even if every notifier is down, which is exactly
+    # when someone will want to look it up afterwards.
+    record(alert)
     Enum.each(active_notifiers(), &notify_via(&1, alert))
+  end
+
+  defp record(alert) do
+    Persistence.store_alert(alert)
+  catch
+    :exit, _reason -> :ok
   end
 
   defp notify_via(notifier, alert) do

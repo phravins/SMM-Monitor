@@ -97,6 +97,17 @@ if webhook = System.get_env("SMM_ALERT_WEBHOOK_URL") do
   config :smm_monitor, alert_webhook_url: webhook
 end
 
+# Weekly client reports, written unprompted to the reports directory.
+# Off by default; see the README for what they contain.
+config :smm_monitor,
+  weekly_reports_enabled: RC.bool("SMM_WEEKLY_REPORTS", false),
+  weekly_report_day: RC.integer("SMM_WEEKLY_REPORT_DAY", 1),
+  weekly_report_hour: RC.integer("SMM_WEEKLY_REPORT_HOUR", 7)
+
+if dir = System.get_env("SMM_REPORTS_DIR") do
+  config :smm_monitor, reports_dir: dir
+end
+
 # Remote dashboard access over SSH. Off unless explicitly enabled.
 config :smm_monitor,
   ssh_enabled: RC.bool("SMM_SSH_ENABLED", false),

@@ -2,7 +2,9 @@
 
 A terminal dashboard for tracking client brand mentions across social
 platforms. Built for RealOffice's social media management work — no web
-frontend, no database, just a TUI you can leave running in a pane.
+frontend, just a TUI you can leave running in a pane, a SQLite file
+behind it, Slack alerts when something needs attention, and a PDF a
+client can actually be handed.
 
 ```
  SMM MONITOR · watching: realoffice, real office · MOCK DATA · updated 13:15:13
@@ -97,6 +99,7 @@ directory and works.
 | `j` / `k`, `↑` / `↓` | Scroll the mentions table |
 | `PgUp` / `PgDn` | Scroll a screen at a time |
 | `g` / `Home` | Jump to the newest mention |
+| `R` | **Write a report** for the selected client (see below) |
 | `q` | Quit (or `Ctrl-C`) |
 
 On the clients screen, `j`/`k` move between clients, `h`/`l` between a
@@ -675,6 +678,140 @@ A failing notifier is logged and the others still run; a database that
 can't answer means no baseline, which reads as "still warming up" rather
 than as a reason to alert. The log notifier is always on, so an alert is
 recorded somewhere even when every webhook is down.
+
+## Client reports
+
+Everything above is for the person watching the dashboard. A report is
+for the person paying for it: one document, per client, covering a week
+or any range you ask for, that can go to them as it comes out.
+
+```sh
+# Last 7 days for one client — PDF and CSV
+mix smm.report --client acme-corp
+
+# An explicit range
+mix smm.report --client acme-corp --from 2026-09-01 --to 2026-09-07
+
+# Last 30 days, data only
+mix smm.report --client acme-corp --days 30 --format csv
+
+# Every active client at once
+mix smm.report --all --days 7
+
+# If you can't remember the id
+mix smm.report --list
+```
+
+On a release there is no `mix`, so the same thing is an `rpc` into the
+running node (see **[DEPLOY.md](DEPLOY.md)**):
+
+```sh
+sudo -u smm-monitor /opt/smm-monitor/bin/smm_monitor rpc \
+  'SmmMonitor.Reports.generate("acme-corp", days: 7)'
+```
+
+Or press **`R`** on the dashboard: it writes a report for whichever
+client is on screen and tells you the filenames in the footer. That's
+the whole interaction — it's the same seven days the mix task defaults
+to. Read-only SSH sessions can't do this; a remote viewer shouldn't be
+able to write files onto the host's disk by pressing a key.
+
+### Where the files go
+
+`$SMM_REPORTS_DIR` if you set it, otherwise a `reports` directory
+alongside the database (`/var/lib/smm-monitor/reports` under systemd,
+`./data/reports` in development). Deliberately *not* inside the release
+directory, which a deploy replaces — last quarter's reports should
+survive an upgrade.
+
+Files are named for the client and the period they cover:
+
+```
+reports/
+├── acme-corp_2026-09-05_2026-09-11.pdf
+├── acme-corp_2026-09-05_2026-09-11.csv
+├── globex_2026-09-05_2026-09-11.pdf
+└── globex_2026-09-05_2026-09-11.csv
+```
+
+That name still identifies the document after someone has forwarded it,
+and the directory sorts sensibly on its own.
+
+### What's in the PDF
+
+Four or five pages, in the OSWORKS house style — cream, charcoal and
+rust, serif body text, black-header tables:
+
+1. **Cover** — client name, the date range in words, when it was
+   generated, the brand terms it was built from, and a summary callout
+   in a sentence or two of plain English ("Sentiment is improving, on
+   higher volume than the week before").
+2. **Summary** — total mentions against the previous period of the same
+   length, average sentiment against the same, and the positive /
+   neutral / negative split with shares.
+3. **Mentions by platform** — every configured platform, busiest first,
+   including the ones with nothing on them. A platform reading zero is
+   information; a missing row just looks like an oversight.
+4. **Sentiment trend** — a line chart on a fixed −1 to +1 axis, one
+   point per day, plus the daily table underneath it.
+5. **Most positive and most negative mentions** — up to five each, as
+   quotes, with platform, author, time and score. This is the part
+   clients actually read.
+6. **Alerts raised** — what fired during the period and when. If
+   alerting wasn't running, the section says so rather than showing an
+   empty table: "no alerts" and "nothing was watching" are different
+   facts and only one of them is reassuring.
+
+### What's in the CSV
+
+Every mention in the period, one row each, twelve columns:
+`client_id`, `client_name`, `platform`, `mention_id`, `author`, `text`,
+`url`, `published_at`, `sentiment`, `sentiment_value`, `sentiment_score`
+and `mock`. RFC 4180 quoting, CRLF line endings, header row always
+present — it opens in Excel or Sheets without an import wizard, and a
+multi-line forum post stays one row.
+
+The `mock` column matters when you're still running sample data: it's
+the difference between coverage and a demo.
+
+### PDF needs Python; CSV needs nothing
+
+The PDF is rendered by a small ReportLab script shipped in
+`priv/reports/`, so the PDF half of this needs:
+
+```sh
+sudo apt install python3
+pip3 install reportlab        # or: apt install python3-reportlab
+```
+
+Nothing else in the app depends on it. If it's missing, the mix task
+says exactly what to install instead of failing obscurely, and
+`--format csv` keeps working. The weekly schedule and the `R` key both
+degrade the same way: you lose the formatted document, not the data.
+
+### Weekly reports, unprompted
+
+Off by default — a process that writes files on its own should be
+something you switched on:
+
+```sh
+SMM_WEEKLY_REPORTS=true      # default false
+SMM_WEEKLY_REPORT_DAY=1      # 1 = Monday … 7 = Sunday
+SMM_WEEKLY_REPORT_HOUR=7     # UTC
+SMM_REPORTS_DIR=/var/lib/smm-monitor/reports
+```
+
+With it on, every active client's last seven days are written to the
+reports directory at the configured hour — Monday 07:00 UTC by default,
+so a week that ended last night is on someone's desk before the Monday
+meeting. Paused clients are skipped.
+
+It checks the calendar hourly rather than setting a seven-day timer, so
+a restart, a deploy or a machine that was asleep doesn't cost you a
+week's report. One client's report failing doesn't stop the others.
+
+Nothing is emailed anywhere: the files land in a directory, and what
+happens to them next is a human decision.
 
 ## Remote access over SSH
 
@@ -1329,6 +1466,10 @@ source failed counts as an error.
 | `SMM_ALERT_WEBHOOK_URL` | Global Slack incoming webhook for alerts |
 | `SMM_ALERTS_ENABLED` | Set `false` to switch the alert engine off entirely |
 | `SMM_ALERT_BASELINE_DAYS` | Days of same-hour history behind the volume baseline (default 7) |
+| `SMM_REPORTS_DIR` | Where generated reports are written (default: `reports` beside the database) |
+| `SMM_WEEKLY_REPORTS` | Set `true` to write a weekly report per active client (default false) |
+| `SMM_WEEKLY_REPORT_DAY` | Day of the week to write them, 1 = Monday (default 1) |
+| `SMM_WEEKLY_REPORT_HOUR` | Hour of that day, UTC (default 7) |
 | `SMM_POLL_INTERVAL_MS` | Poll interval per platform (default 30000) |
 | `SMM_REDDIT_SUBREDDITS` | Comma-separated subreddits to watch. Empty searches all of Reddit. |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` | Reddit **(live)** |
@@ -1595,6 +1736,9 @@ Compile-time defaults live in `config/config.exs`:
 | `:alerts_enabled` | `true` | Whether the alert engine runs |
 | `:alert_baseline_days` | `7` | Days of same-hour history behind the volume baseline |
 | `:alert_notifiers` | log + Slack | Channels an alert is sent to |
+| `:weekly_reports_enabled` | `false` | Whether the weekly report scheduler runs |
+| `:weekly_report_day` / `:weekly_report_hour` | `1` / `7` | When the weekly pass runs, UTC |
+| `:reports_dir` | unset | Where reports are written; overridden by `SMM_REPORTS_DIR` |
 | `:ssh_enabled` | `false` | Whether the SSH server starts |
 | `:ssh_port` | `2222` | Port the SSH server listens on |
 | `:start_persistence` | `true` | Whether the tree starts the repo and migrator |
@@ -1634,8 +1778,11 @@ Reddit subreddit list is its own.
 
 ## Known limitations
 
-* Mentions older than the retention window are gone for good; there's no
-  archive or export.
+* Mentions older than the retention window are gone for good. Reports
+  and CSV exports can only cover what is still on disk, so a 90-day
+  report on a 30-day retention shows 30 days and says nothing about the
+  missing 60. Raise `SMM_RETENTION_DAYS` before you need the history,
+  not after.
 * Retention deletes rows but SQLite doesn't shrink the file — see disk
   space above.
 * The clients screen edits clients, brand terms and subreddits only.
@@ -1690,12 +1837,21 @@ Reddit subreddit list is its own.
   only "host terminal" versus "everyone else".
 * **Email alerting is not built** — Slack (or any webhook) only. The
   notifier behaviour is the seam if you want to add it.
-* Alerts and their incidents live in memory, so a restart forgets what
-  was firing. A condition still true at the next evaluation opens a new
-  incident and alerts once more; one that recovered while the app was
-  down never sends its all-clear.
+* Alerts are written to the database as they fire, so reports can show
+  what happened, but the *live incident state* is still in memory: a
+  restart forgets what was firing. A condition still true at the next
+  evaluation opens a new incident and alerts once more; one that
+  recovered while the app was down never sends its all-clear.
 * Watch phrases are plain substrings, so "scam" matches "scamper". A
   word-boundary match would fix that and break "refund"/"refunds"; v1
   takes the false positive over the false negative.
 * Sentiment alerts inherit the lexicon scorer's blind spots — sarcasm
   especially.
+* PDF reports need `python3` and `reportlab` on the host. Without them
+  you get the CSV and a message saying what to install — the data is
+  never the thing that goes missing.
+* Reports are written to a directory and nothing else happens to them.
+  There is no emailing, no upload, and no record of which ones were
+  sent to a client.
+* A report's numbers come from the durable log, so a client added last
+  week cannot be reported on for the month before it existed.
