@@ -37,3 +37,6 @@ smm_monitor-*.tar
 
 # Packaged releases from scripts/build_release.sh.
 /dist/
+
+# Self-contained binaries built by `mix release standalone`.
+/burrito_out/

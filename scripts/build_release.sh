@@ -25,7 +25,9 @@ echo "==> Building ${APP} release (MIX_ENV=${MIX_ENV})"
 # which is a miserable class of bug to debug on a server.
 mix deps.get --only "$MIX_ENV"
 mix compile
-mix release --overwrite
+# Named explicitly: the project also defines a `standalone` (Burrito)
+# release, and a bare `mix release` would try to build that too.
+mix release smm_monitor --overwrite
 
 RELEASE_DIR="_build/${MIX_ENV}/rel/${APP}"
 VERSION=$("${RELEASE_DIR}/bin/${APP}" version | awk '{print $NF}')

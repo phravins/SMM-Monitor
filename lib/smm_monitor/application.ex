@@ -49,6 +49,11 @@ defmodule SmmMonitor.Application do
         tui_children()
 
     opts = [strategy: :one_for_one, name: SmmMonitor.Supervisor]
+
+    # Only does anything in the downloaded binary, where the node would
+    # otherwise halt the moment boot finishes. See SmmMonitor.Standalone.
+    SmmMonitor.Standalone.hold_open()
+
     Supervisor.start_link(children, opts)
   end
 
