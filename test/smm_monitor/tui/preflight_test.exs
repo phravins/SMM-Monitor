@@ -12,6 +12,40 @@ defmodule SmmMonitor.TUI.PreflightTest do
     end
   end
 
+  describe "drawable_terminal?/1" do
+    test "rejects the terminals termbox cannot draw on" do
+      refute Preflight.drawable_terminal?("dumb")
+      refute Preflight.drawable_terminal?("")
+      refute Preflight.drawable_terminal?(nil)
+      refute Preflight.drawable_terminal?("  ")
+    end
+
+    test "accepts an ordinary terminal" do
+      assert Preflight.drawable_terminal?("xterm-256color")
+      assert Preflight.drawable_terminal?("screen")
+    end
+  end
+
+  describe "explain/2 for a terminal that cannot draw" do
+    setup do
+      %{text: Preflight.explain(:unsupported_terminal, term: "dumb")}
+    end
+
+    test "says which terminal it found", %{text: text} do
+      assert text =~ ~s("dumb")
+    end
+
+    # Without this the message is a dead end for anybody running it from
+    # cron or a script, which is exactly who hits it.
+    test "offers the headless way out", %{text: text} do
+      assert text =~ "SMM_TUI=0"
+    end
+
+    test "does not blame a stale unpacked copy", %{text: text} do
+      refute text =~ "rm -rf"
+    end
+  end
+
   describe "explain/2 for a downloaded binary" do
     setup do
       %{text: Preflight.explain(:termbox_unavailable, root: @root, os: {:unix, :linux})}

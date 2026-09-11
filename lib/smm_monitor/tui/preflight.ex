@@ -48,7 +48,17 @@ defmodule SmmMonitor.TUI.Preflight do
   @bindings ExTermbox.Bindings
 
   @typedoc "Why the dashboard can't start."
-  @type problem :: :termbox_unavailable
+  @type problem :: :termbox_unavailable | :unsupported_terminal
+
+  # termbox drives the screen through a terminfo entry. `dumb` has none
+  # worth the name, and an empty TERM names nothing at all, so
+  # `tb_init()` returns TB_EUNSUPPORTED_TERMINAL. Ratatouille asserts
+  # `:ok = bindings.init()`, so that arrives as a MatchError inside a
+  # supervisor's child, and the practical effect is that the app exits 1
+  # having printed nothing whatsoever. Catching the two terminals that
+  # cannot possibly work turns the commonest version of that into a
+  # sentence.
+  @unusable_terminals ["", "dumb"]
 
   @doc """
   `:ok`, or `{:error, :termbox_unavailable}` if termbox didn't load.
@@ -59,7 +69,23 @@ defmodule SmmMonitor.TUI.Preflight do
   """
   @spec check() :: :ok | {:error, problem()}
   def check do
-    if available?(), do: :ok, else: {:error, :termbox_unavailable}
+    cond do
+      not available?() -> {:error, :termbox_unavailable}
+      not drawable_terminal?() -> {:error, :unsupported_terminal}
+      true -> :ok
+    end
+  end
+
+  @doc """
+  Whether `TERM` names a terminal termbox could draw on.
+
+  Only rules out the two that certainly can't be drawn on. A terminal
+  named but not described on this machine still fails inside termbox,
+  where this can't see it.
+  """
+  @spec drawable_terminal?(String.t() | nil) :: boolean()
+  def drawable_terminal?(term \\ System.get_env("TERM")) do
+    String.trim(term || "") not in @unusable_terminals
   end
 
   @doc "Whether termbox's bindings loaded."
@@ -81,7 +107,9 @@ defmodule SmmMonitor.TUI.Preflight do
   the dependency instead.
   """
   @spec explain(problem(), keyword()) :: String.t()
-  def explain(:termbox_unavailable, opts \\ []) do
+  def explain(problem, opts \\ [])
+
+  def explain(:termbox_unavailable, opts) do
     root = Keyword.get_lazy(opts, :root, &install_root/0)
     os = Keyword.get_lazy(opts, :os, &host_os/0)
 
@@ -112,6 +140,24 @@ defmodule SmmMonitor.TUI.Preflight do
       #{indent("mix deps.compile ex_termbox --force")}
       """
     end
+  end
+
+  def explain(:unsupported_terminal, opts) do
+    term = Keyword.get_lazy(opts, :term, fn -> System.get_env("TERM") end)
+
+    """
+    SMM Monitor could not start the dashboard.
+
+    It draws a full-screen dashboard, and that needs a terminal that can
+    draw one. This one says it is #{inspect(term || "")}, which can't.
+
+    If you are running it through a script, a scheduled job, or an
+    editor's built-in output pane, run it in a terminal window instead.
+    On Windows, use Windows Terminal rather than the old console window.
+
+    To run it without the dashboard — logging to the screen, for a server
+    or a cron job — set SMM_TUI=0.
+    """
   end
 
   # Windows has no `rm`, and telling somebody to run one is how you get a
