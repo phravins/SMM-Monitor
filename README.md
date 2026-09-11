@@ -99,6 +99,8 @@ directory and works.
 | `j` / `k`, `↑` / `↓` | Scroll the mentions table |
 | `PgUp` / `PgDn` | Scroll a screen at a time |
 | `g` / `Home` | Jump to the newest mention |
+| `h` | **Trends** — mention volume and sentiment per day (see below) |
+| `w` / `W` | On the trends screen: window 7 / 14 / 30 days |
 | `R` | **Write a report** for the selected client (see below) |
 | `q` | Quit (or `Ctrl-C`) |
 
@@ -678,6 +680,96 @@ A failing notifier is logged and the others still run; a database that
 can't answer means no baseline, which reads as "still warming up" rather
 than as a reason to alert. The log notifier is always on, so an alert is
 recorded somewhere even when every webhook is down.
+
+## Seeing the trend
+
+Every other screen answers "what is being said right now". Press **`h`**
+(for history) and you get the other question: is this getting better or
+worse?
+
+```
+ SMM MONITOR · Demo Ltd (paused) 3/3 [[/]] · demoltd · MOCK DATA · updated 06:28
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  all    reddit    youtube    twitter    instagram   [trends]   config        │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌─last 14 days · Demo Ltd (paused)─────────────────────────────────────────────┐
+│  143 mentions · 10.2 a day · 14/14 days with mentions · avg +0.12            │
+│                                                                              │
+│  mentions per day   busiest Tue 8 Sep · 23 mention(s)                        │
+│ 23 ┤                                                  ████                   │
+│    ┤                                             ████ ████                   │
+│    ┤                                        ▄▄▄▄ ████ ████ ████              │
+│    ┤     ▄▄▄▄           ████                ████ ████ ████ ████ ████ ▄▄▄▄    │
+│    ┤▄▄▄▄ ████      ████ ████           ████ ████ ████ ████ ████ ████ ████    │
+│  3 ┤████ ████ ████ ████ ████ ████ ▄▄▄▄ ████ ████ ████ ████ ████ ████ ████    │
+│  0 └─────────────────────────────────────────────────────────────────────    │
+│    29 Aug                          5 Sep                          11 Sep     │
+│                                                                              │
+│  average sentiment per day   best Thu 10 Sep +0.45 · worst Fri 4 Sep -0.50   │
+│ +1 ┤                                                                         │
+│    ┤▄▄▄▄ ▄▄▄▄ ▄▄▄▄ ▄▄▄▄                          ▄▄▄▄ ▄▄▄▄ ▄▄▄▄ ████ ▄▄▄▄    │
+│  0 ┼─────────────────────────────────────────────────────────────────────    │
+│    ┤                    ▀▀▀▀ ▀▀▀▀ ████ ████ ▀▀▀▀                             │
+│ -1 ┤                                                                         │
+│    29 Aug                          5 Sep                          11 Sep     │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ w window (7/14/30d) · [/] client · Report · a back · q quit · from stored histo
+```
+
+Two charts, one column per day, for whichever client is selected:
+
+* **Mentions per day**, scaled to the busiest day in the window. The
+  axis carries the number; the shape is what you read. A day nobody
+  said anything is a blank column, not a missing one.
+* **Average sentiment per day**, on a fixed −1 to +1 scale, growing up
+  from a zero line in green and down from it in red. Fixed rather than
+  scaled to the week's own range, so a calm week looks calm instead of
+  being magnified into a crisis.
+
+### Changing the window
+
+`w` cycles **7 → 14 → 30 days** and `W` goes back the other way. The
+default is **14** — two weekends and the week between them, which is
+enough to see a weekly rhythm without flattening this week into it.
+
+The window only means anything on this screen, so `w` does nothing on
+the others: changing a window you can't see is a setting, not a
+keystroke.
+
+### What it reads
+
+The SQLite log, grouped by day in SQL — not the live window, which only
+holds hours. Two consequences worth knowing:
+
+* **Days are UTC**, and they are the day a mention was *published*, not
+  the day we collected it. That matches what the PDF reports say about
+  the same period.
+* **Retention bounds it.** With the default 30-day retention a 30-day
+  window is the whole of your history, and the oldest columns start
+  disappearing as the window catches up with the cutoff. Raise
+  `SMM_RETENTION_DAYS` before you need the history rather than after.
+
+The footer says `from stored history`, or tells you when persistence or
+writing is switched off — on this screen an empty chart would otherwise
+be ambiguous between "nobody said anything" and "nothing is being
+written down".
+
+### Terminal size
+
+The columns widen on a roomy terminal and narrow to single characters
+for a 30-day window. A 30-day window needs about 60 columns; below that
+the screen drops the *oldest* days and says how many, rather than
+letting the right-hand end — this week — get clipped off the edge.
+
+### Speed
+
+The query is grouped in SQLite and indexed on `(client_id,
+source_timestamp)`, so its cost follows the window being drawn rather
+than the history behind it. On a synthetic database, a 30-day window
+took 1.1 ms at 100,000 mentions and 1.2 ms at 2,000,000. The series is
+re-read at most every five seconds while the screen is open, and not at
+all while you are on another tab.
 
 ## Client reports
 
@@ -1855,3 +1947,8 @@ Reddit subreddit list is its own.
   sent to a client.
 * A report's numbers come from the durable log, so a client added last
   week cannot be reported on for the month before it existed.
+* The trends screen shows UTC days. A mention posted at 01:00 in
+  Melbourne lands on the previous day's column.
+* The trends screen reads the database only. With persistence switched
+  off it has nothing to show, and says so in its footer rather than
+  drawing an empty chart.

@@ -54,6 +54,27 @@ defmodule SmmMonitor.TUI.TrendsScreenTest do
       assert model.quit
     end
 
+    test "the tab bar keeps its counts when the terminal is wide enough" do
+      model = Model.new(%{window: %{height: 40, width: 120}})
+
+      assert {:trends, "trends (14d)"} in Model.tab_labels(model)
+      assert Enum.any?(Model.tab_labels(model), fn {_tab, label} -> label =~ "(" end)
+    end
+
+    test "and drops them rather than trailing off the edge of a narrow one" do
+      # Seven tabs with their counts run past 80 columns, and a tab bar
+      # cut off mid-word reads as a bug rather than as a full screen.
+      model = Model.new(%{window: %{height: 40, width: 80}})
+      labels = Model.tab_labels(model)
+
+      assert {:trends, "trends"} in labels
+      refute Enum.any?(labels, fn {_tab, label} -> label =~ "(" end)
+
+      width = Enum.reduce(labels, 0, fn {_tab, label}, n -> n + String.length(label) + 4 end)
+
+      assert width + 2 <= 80
+    end
+
     test "h on the clients screen still steps between a client's fields", %{model: model} do
       # `h`/`l` were the way across that grid before this screen existed,
       # and the arrow keys do the same job there — so the config screen

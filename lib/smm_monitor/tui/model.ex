@@ -427,6 +427,35 @@ defmodule SmmMonitor.TUI.Model do
     "#{platform} (#{Map.get(model.breakdown, platform, 0)})"
   end
 
+  @doc """
+  The tab labels to draw, with their tabs, shortened if they won't fit.
+
+  Seven tabs with their counts run past the right-hand edge of an
+  80-column terminal, and a tab bar that trails off mid-word looks like
+  a bug. The counts are the part that can go: they are repeated in the
+  summary panel a line below, where the platform tabs' numbers are the
+  ones being read anyway.
+  """
+  @spec tab_labels(t()) :: [{atom(), String.t()}]
+  def tab_labels(%__MODULE__{} = model) do
+    full = Enum.map(model.tabs, &{&1, tab_label(model, &1)})
+
+    # Four characters of padding and brackets around each label, and the
+    # panel's own two borders.
+    if drawn_width(full) + 2 <= model.columns do
+      full
+    else
+      Enum.map(model.tabs, &{&1, short_tab_label(&1)})
+    end
+  end
+
+  defp drawn_width(labels) do
+    Enum.reduce(labels, 0, fn {_tab, label}, total -> total + String.length(label) + 4 end)
+  end
+
+  defp short_tab_label(:all), do: "all"
+  defp short_tab_label(tab), do: to_string(tab)
+
   @doc "Whether the mentions list scrolls past the bottom of the table."
   @spec scrollable?(t()) :: boolean()
   def scrollable?(%__MODULE__{} = model), do: length(model.mentions) > model.rows
@@ -458,8 +487,9 @@ defmodule SmmMonitor.TUI.Model do
 
   # What the trends screen spends its vertical space on besides the two
   # charts: the headline line, two sub-headings, two blank lines, the
-  # volume baseline and both date axes.
-  @trend_furniture 9
+  # volume baseline, both date axes, and the gap the mentions table
+  # doesn't have above its panel.
+  @trend_furniture 10
 
   @doc """
   How tall each trends chart can be drawn in this terminal.

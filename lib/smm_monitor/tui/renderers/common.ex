@@ -275,9 +275,8 @@ defmodule SmmMonitor.TUI.Renderers.Common do
       defp tab_bar(model) do
         panel(height: 3, padding: 0) do
           label do
-            Enum.map(model.tabs, fn tab ->
+            Enum.map(Model.tab_labels(model), fn {tab, content} ->
               selected? = tab == model.tab
-              content = Model.tab_label(model, tab)
 
               if selected? do
                 text(content: " [#{content}] ", color: @accent, attributes: @bold)
