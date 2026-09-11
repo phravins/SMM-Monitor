@@ -79,7 +79,9 @@ fetch() {
   if command -v curl >/dev/null 2>&1; then
     curl -fL --progress-bar -o "$destination" "$url" || return 1
   elif command -v wget >/dev/null 2>&1; then
-    wget -q --show-progress -O "$destination" "$url" || return 1
+    # No --show-progress: it is GNU wget only, and recent enough GNU
+    # wget at that.
+    wget -O "$destination" "$url" || return 1
   else
     die "Need curl or wget to download anything, and found neither."
   fi
@@ -94,10 +96,26 @@ main() {
   step "Installing $BINARY for $(uname -s) $(uname -m)"
   say "    from $url"
 
-  temporary="$(mktemp)"
+  # An explicit template, because macOS's mktemp refuses a bare call —
+  # the installer would die on the Mac it was meant to serve.
+  temporary="$(mktemp "${TMPDIR:-/tmp}/smm-monitor.XXXXXX")"
   trap 'rm -f "$temporary"' EXIT
 
-  fetch "$url" "$temporary" || die "Download failed. If this is a brand-new checkout with no release yet, there is nothing to install."
+  if ! fetch "$url" "$temporary"; then
+    say ""
+    die "$(cat <<MESSAGE
+Couldn't download $asset.
+
+Most likely there is no published release yet — the download only
+appears once a version has been tagged. Check what's available at
+
+    https://github.com/$REPO/releases
+
+If a release is listed there and this still fails, it is worth opening
+an issue: that would mean the file is missing from it.
+MESSAGE
+)"
+  fi
 
   # A 404 page is still a successful download as far as curl -f is
   # concerned on some versions, so check we got something binary-sized.
