@@ -20,6 +20,7 @@ on:
     paths:
       - "mix.exs"
       - "mix.lock"
+      - "scripts/build-standalone.sh"
       - "scripts/burrito-cc"
       - ".github/workflows/release.yml"
       - ".github/scripts/smoke-test.sh"
