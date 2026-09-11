@@ -87,6 +87,67 @@ fetch() {
   fi
 }
 
+# --- clear any stale unpacked copy ------------------------------------------
+
+# The binary carries its runtime compressed inside it and unpacks it on
+# first run into a directory named after the app and Erlang versions.
+# Burrito decides whether to unpack by looking for a metadata file there
+# and nothing else, so a directory left by an earlier build of the same
+# version is reused forever — and installing again does not replace it.
+#
+# That is not a hypothetical. A copy built on an ordinary Linux machine
+# holds glibc-linked libraries, the bundled runtime is musl, and the
+# dashboard dies on startup with
+#
+#     Failed to load NIF library: ... __snprintf_chk: symbol not found
+#
+# every time, no matter how often you reinstall. So the installer clears
+# it: the freshly installed binary then unpacks what it is carrying.
+#
+# Only the unpacked program lives there. The database and the settings
+# file are elsewhere and are not touched.
+payload_base() {
+  if [ -n "${STANDALONE_INSTALL_DIR:-}" ]; then
+    printf '%s/.burrito' "$STANDALONE_INSTALL_DIR"
+  elif [ "$(uname -s)" = "Darwin" ]; then
+    printf '%s/Library/Application Support/.burrito' "$HOME"
+  elif [ -n "${XDG_DATA_HOME:-}" ]; then
+    printf '%s/.burrito' "$XDG_DATA_HOME"
+  else
+    printf '%s/.local/share/.burrito' "$HOME"
+  fi
+}
+
+clear_stale_payload() {
+  base="$(payload_base)"
+
+  [ -d "$base" ] || return 0
+
+  cleared=0
+
+  # `standalone` is this release's name, and the only thing this script
+  # is entitled to delete. Another Burrito app's directory is left alone.
+  for unpacked in "$base"/standalone_erts-*; do
+    [ -d "$unpacked" ] || continue
+
+    if rm -rf "$unpacked"; then
+      cleared=1
+    else
+      warn "Could not remove $unpacked"
+      say "    If the dashboard won't start, delete that folder by hand."
+    fi
+  done
+
+  # An `if`, not `test && step`: under `set -e` an AND-list that ends
+  # false is a failed command, and "nothing to clear" would abort the
+  # install.
+  if [ "$cleared" -eq 1 ]; then
+    step "Cleared the previous unpacked copy"
+  fi
+
+  return 0
+}
+
 # --- install ----------------------------------------------------------------
 
 main() {
@@ -133,6 +194,8 @@ MESSAGE
   trap - EXIT
 
   step "Installed to $target"
+
+  clear_stale_payload
 
   case ":$PATH:" in
     *":$INSTALL_DIR:"*)
