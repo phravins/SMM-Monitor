@@ -44,7 +44,7 @@ defmodule SmmMonitor.Reports.Period do
   @doc """
   An explicit date range, inclusive of both ends.
 
-      iex> period = SmmMonitor.Reports.Period.between(~D[2026-09-01], ~D[2026-09-07])
+      iex> {:ok, period} = SmmMonitor.Reports.Period.between(~D[2026-09-01], ~D[2026-09-07])
       iex> {period.days, period.label}
       {7, "1 Sep 2026 to 7 Sep 2026"}
   """
