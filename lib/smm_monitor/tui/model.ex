@@ -18,8 +18,11 @@ defmodule SmmMonitor.TUI.Model do
   alias SmmMonitor.Client.AlertConfig
   alias SmmMonitor.Monitor
   alias SmmMonitor.Processing.Sentiment
+  alias SmmMonitor.Trends
 
   @default_rows 12
+  # An 80-column terminal, until one says otherwise.
+  @default_columns 80
 
   defstruct tab: :all,
             tabs: [:all],
@@ -60,11 +63,18 @@ defmodule SmmMonitor.TUI.Model do
               average: 0.0
             },
             breakdown: %{},
+            # The trends screen: how many days it covers, the series
+            # itself, and when that series was last read. Kept on the
+            # model rather than re-read every tick — see refresh_trends/1.
+            trend_window: 14,
+            trends: %Trends{},
+            trends_read_at: nil,
             mentions: [],
             statuses: [],
             # Index of the first visible row in `mentions`.
             offset: 0,
             rows: @default_rows,
+            columns: @default_columns,
             keywords: [],
             mock_mode: true,
             window_ms: nil,
@@ -81,6 +91,7 @@ defmodule SmmMonitor.TUI.Model do
     ?i => :instagram,
     ?r => :reddit,
     ?y => :youtube,
+    ?h => :trends,
     ?c => :config
   }
 
@@ -114,12 +125,14 @@ defmodule SmmMonitor.TUI.Model do
     clients = read_clients()
 
     %__MODULE__{
-      tabs: [:all | SmmMonitor.platforms()] ++ [:config],
+      tabs: [:all | SmmMonitor.platforms()] ++ [:trends, :config],
       rows: rows_for(context),
+      columns: columns_for(context),
       read_only: Map.get(context, :read_only, false),
       clients: clients,
       client_id: Map.get(context, :client_id) || default_client_id(clients),
       mock_mode: SmmMonitor.config(:mock_mode, true),
+      trend_window: Trends.default_window(),
       window_ms: SmmMonitor.config(:window_ms, :timer.hours(24))
     }
     |> refresh()
@@ -133,9 +146,10 @@ defmodule SmmMonitor.TUI.Model do
   """
   @spec refresh(t()) :: t()
   def refresh(%__MODULE__{} = model) do
-    # The config tab has no mention list of its own; reading for :config
-    # would filter on a platform that doesn't exist.
-    reading_tab = if model.tab == :config, do: :all, else: model.tab
+    # Neither the config screen nor the trends screen has a mention list
+    # of its own; reading for them would filter on a platform that
+    # doesn't exist.
+    reading_tab = if model.tab in [:config, :trends], do: :all, else: model.tab
     clients = read_clients()
     model = %{model | clients: clients, client_id: resolve_selection(model, clients)}
     scope = model.client_id || :all
@@ -150,6 +164,7 @@ defmodule SmmMonitor.TUI.Model do
         keywords: keywords_of(model),
         updated_at: DateTime.utc_now()
     }
+    |> refresh_trends()
     |> clamp_selection()
     |> clamp_offset()
   end
@@ -187,9 +202,21 @@ defmodule SmmMonitor.TUI.Model do
 
   def handle_key(%__MODULE__{} = model, {:char, ?q}), do: %{model | quit: true}
 
+  # `h`/`l` step between a client's fields on the config screen, which is
+  # what they already meant there. Everywhere else `h` opens the trends
+  # screen — so the config screen is the one place the tab shortcut
+  # yields, and the arrow keys do the same job on it anyway.
+  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?h}), do: move_field(model, -1)
+  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?l}), do: move_field(model, 1)
+
   def handle_key(%__MODULE__{} = model, {:char, char}) when is_map_key(@tab_keys, char) do
     select_tab(model, @tab_keys[char])
   end
+
+  # `w` widens the trends window and `W` narrows it, on that screen only:
+  # changing a window you cannot see is a setting, not a keystroke.
+  def handle_key(%__MODULE__{tab: :trends} = model, {:char, ?w}), do: cycle_window(model, 1)
+  def handle_key(%__MODULE__{tab: :trends} = model, {:char, ?W}), do: cycle_window(model, -1)
 
   # Cycling clients works from every tab: switching client is the thing
   # an account manager does most, and it should never need a detour
@@ -208,8 +235,6 @@ defmodule SmmMonitor.TUI.Model do
   def handle_key(%__MODULE__{tab: :config} = model, {:char, ?k}), do: move_client(model, -1)
   def handle_key(%__MODULE__{tab: :config} = model, {:key, :arrow_down}), do: move_client(model, 1)
   def handle_key(%__MODULE__{tab: :config} = model, {:key, :arrow_up}), do: move_client(model, -1)
-  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?l}), do: move_field(model, 1)
-  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?h}), do: move_field(model, -1)
 
   def handle_key(%__MODULE__{tab: :config} = model, {:key, :arrow_right}),
     do: move_field(model, 1)
@@ -392,6 +417,8 @@ defmodule SmmMonitor.TUI.Model do
   # meaningless there.
   def tab_label(%__MODULE__{}, :config), do: "config"
 
+  def tab_label(%__MODULE__{} = model, :trends), do: "trends (#{model.trend_window}d)"
+
   def tab_label(%__MODULE__{} = model, :all) do
     "all (#{Enum.sum(Map.values(model.breakdown))})"
   end
@@ -400,9 +427,176 @@ defmodule SmmMonitor.TUI.Model do
     "#{platform} (#{Map.get(model.breakdown, platform, 0)})"
   end
 
+  @doc """
+  The tab labels to draw, with their tabs, shortened if they won't fit.
+
+  Seven tabs with their counts run past the right-hand edge of an
+  80-column terminal, and a tab bar that trails off mid-word looks like
+  a bug. The counts are the part that can go: they are repeated in the
+  summary panel a line below, where the platform tabs' numbers are the
+  ones being read anyway.
+  """
+  @spec tab_labels(t()) :: [{atom(), String.t()}]
+  def tab_labels(%__MODULE__{} = model) do
+    full = Enum.map(model.tabs, &{&1, tab_label(model, &1)})
+
+    # Four characters of padding and brackets around each label, and the
+    # panel's own two borders.
+    if drawn_width(full) + 2 <= model.columns do
+      full
+    else
+      Enum.map(model.tabs, &{&1, short_tab_label(&1)})
+    end
+  end
+
+  defp drawn_width(labels) do
+    Enum.reduce(labels, 0, fn {_tab, label}, total -> total + String.length(label) + 4 end)
+  end
+
+  defp short_tab_label(:all), do: "all"
+  defp short_tab_label(tab), do: to_string(tab)
+
   @doc "Whether the mentions list scrolls past the bottom of the table."
   @spec scrollable?(t()) :: boolean()
   def scrollable?(%__MODULE__{} = model), do: length(model.mentions) > model.rows
+
+  # --- the trends screen ----------------------------------------------------
+
+  # The series is a database query and the dashboard refreshes about once
+  # a second. Weeks of history do not move that fast, so it is re-read
+  # when the question changes — another client, another window, arriving
+  # on the screen — and otherwise at walking pace. With several SSH
+  # sessions open, this is the difference between a query a second each
+  # and one every five.
+  @trends_max_age_ms 5_000
+
+  @doc """
+  Widens or narrows the trends window: 7 to 14 to 30 days and round again.
+
+  The new series is read immediately rather than on the next tick, so the
+  chart changes under the keypress that asked for it.
+  """
+  @spec cycle_window(t(), integer()) :: t()
+  def cycle_window(%__MODULE__{} = model, delta) when delta >= 0 do
+    refresh(%{model | trend_window: Trends.next_window(model.trend_window)})
+  end
+
+  def cycle_window(%__MODULE__{} = model, _delta) do
+    refresh(%{model | trend_window: Trends.previous_window(model.trend_window)})
+  end
+
+  # What the trends screen spends its vertical space on besides the two
+  # charts: the headline line, two sub-headings, two blank lines, the
+  # volume baseline, both date axes, and the gap the mentions table
+  # doesn't have above its panel.
+  @trend_furniture 10
+
+  @doc """
+  How tall each trends chart can be drawn in this terminal.
+
+  Volume gets the larger share. It is read for shape — which days were
+  busy — where the sentiment chart is read for which side of the line a
+  day sits on, and two rows either way answers that.
+  """
+  @spec trend_chart_heights(t()) :: {pos_integer(), pos_integer()}
+  def trend_chart_heights(%__MODULE__{rows: rows}) do
+    # The charts get the space the mentions table would have had, plus
+    # the panels that screen carries and this one doesn't.
+    budget = max(rows + 6 - @trend_furniture, 4)
+    volume = budget |> Kernel.*(5) |> div(9) |> max(3) |> min(8)
+    sentiment = budget |> Kernel.-(volume) |> div(2) |> max(1) |> min(4)
+
+    {volume, sentiment}
+  end
+
+  @doc """
+  The days of the window this terminal has room to draw.
+
+  A month needs sixty columns at its narrowest, and not every terminal
+  has them. Rather than let the renderer clip the chart — which would
+  quietly cut off the right-hand end, where the most recent days are —
+  the oldest days are dropped and the screen says so.
+  """
+  @spec trend_days(t()) :: [Trends.day()]
+  def trend_days(%__MODULE__{} = model) do
+    # One character per bar and one between: n columns need 2n - 1.
+    room = model |> trend_span() |> Kernel.+(1) |> div(2) |> max(3)
+
+    Enum.take(model.trends.days, -room)
+  end
+
+  @doc "How many days of the chosen window had to be left off, if any."
+  @spec trend_days_dropped(t()) :: non_neg_integer()
+  def trend_days_dropped(%__MODULE__{} = model) do
+    length(model.trends.days) - length(trend_days(model))
+  end
+
+  @doc """
+  How wide one day's column can be drawn in this terminal.
+
+  A fortnight of single-character bars on a wide terminal looks like a
+  barcode with sixty columns of empty space beside it, and a month of
+  four-character bars doesn't fit at all. So the columns are given
+  whatever the window can spare, between one character and four.
+  """
+  @spec trend_column_width(t()) :: pos_integer()
+  def trend_column_width(%__MODULE__{} = model) do
+    case length(trend_days(model)) do
+      0 ->
+        1
+
+      days ->
+        model |> trend_span() |> Kernel.+(1) |> div(days) |> Kernel.-(1) |> max(1) |> min(4)
+    end
+  end
+
+  # The room left for bars once the axis label and the panel's borders
+  # have taken theirs.
+  defp trend_span(%__MODULE__{columns: columns}), do: max(columns - 10, 10)
+
+  @doc """
+  Where this screen's numbers come from, for the footer.
+
+  Worth a word here and on no other tab: every other screen reads memory
+  and works whatever the database is doing, while this one is the
+  database's alone. Someone looking at an empty chart should be able to
+  tell "nobody said anything" from "nothing is being written down".
+  """
+  @spec trend_source(t()) :: String.t()
+  def trend_source(%__MODULE__{}) do
+    cond do
+      not SmmMonitor.config(:start_persistence, true) -> "stored history · database off"
+      not SmmMonitor.config(:persist_writes, true) -> "stored history · writing off"
+      true -> "stored history"
+    end
+  end
+
+  @doc "The trends window in words, for a panel title."
+  @spec trend_window_label(t()) :: String.t()
+  def trend_window_label(%__MODULE__{trend_window: 7}), do: "last 7 days"
+  def trend_window_label(%__MODULE__{trend_window: days}), do: "last #{days} days"
+
+  defp refresh_trends(%__MODULE__{tab: :trends} = model) do
+    if trends_stale?(model) do
+      %{
+        model
+        | trends: Trends.for_client(model.client_id, days: model.trend_window),
+          trends_read_at: DateTime.utc_now()
+      }
+    else
+      model
+    end
+  end
+
+  defp refresh_trends(%__MODULE__{} = model), do: model
+
+  defp trends_stale?(%__MODULE__{trends_read_at: nil}), do: true
+
+  defp trends_stale?(%__MODULE__{} = model) do
+    model.trends.client_id != model.client_id or
+      model.trends.window_days != model.trend_window or
+      DateTime.diff(DateTime.utc_now(), model.trends_read_at, :millisecond) >= @trends_max_age_ms
+  end
 
   # --- client selection -----------------------------------------------------
 
@@ -877,6 +1071,9 @@ defmodule SmmMonitor.TUI.Model do
   end
 
   defp rows_for(_context), do: @default_rows
+
+  defp columns_for(%{window: %{width: width}}) when is_integer(width), do: max(width, 40)
+  defp columns_for(_context), do: @default_columns
 
   # A worker that is mid-restart reports `:unavailable`; the dashboard shows
   # that rather than crashing along with it.

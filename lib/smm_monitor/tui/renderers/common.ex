@@ -51,7 +51,9 @@ defmodule SmmMonitor.TUI.Renderers.Common do
       import unquote(constants_module), only: [color: 1, attribute: 1]
 
       alias SmmMonitor.Mention
-      alias SmmMonitor.TUI.Model
+      alias SmmMonitor.Processing.Sentiment
+      alias SmmMonitor.Trends
+      alias SmmMonitor.TUI.{Chart, Model}
 
       # Wide enough for the longest field label ("alert if sentiment"),
       # so no value starts flush against its own name.
@@ -78,6 +80,18 @@ defmodule SmmMonitor.TUI.Renderers.Common do
               alert_banner(model)
               tab_bar(model)
               config_panel(model)
+            end
+          end
+        end
+      end
+
+      def render(%Model{tab: :trends} = model) do
+        view(top_bar: top_bar(model), bottom_bar: bottom_bar(model)) do
+          row do
+            column(size: 12) do
+              alert_banner(model)
+              tab_bar(model)
+              trends_panel(model)
             end
           end
         end
@@ -208,6 +222,24 @@ defmodule SmmMonitor.TUI.Renderers.Common do
         end
       end
 
+      defp bottom_bar(%Model{tab: :trends} = model) do
+        bar do
+          label do
+            text(content: " w", color: @accent, attributes: @bold)
+            text(content: " window (#{Enum.join(Trends.windows(), "/")}d) · ")
+            text(content: "[/]", color: @accent, attributes: @bold)
+            text(content: " client · ")
+            text(content: "R", color: @accent, attributes: @bold)
+            text(content: "eport · ")
+            text(content: "a", color: @accent, attributes: @bold)
+            text(content: " back · ")
+            text(content: "q", color: @accent, attributes: @bold)
+            text(content: " quit · ")
+            text(content: "from #{Model.trend_source(model)}", color: @muted)
+          end
+        end
+      end
+
       defp bottom_bar(model) do
         bar do
           label do
@@ -223,6 +255,8 @@ defmodule SmmMonitor.TUI.Renderers.Common do
             text(content: "outube · ")
             text(content: "c", color: @accent, attributes: @bold)
             text(content: "lients · ")
+            text(content: "h", color: @accent, attributes: @bold)
+            text(content: "istory · ")
             text(content: "[/]", color: @accent, attributes: @bold)
             text(content: " client · ")
             text(content: "R", color: @accent, attributes: @bold)
@@ -241,9 +275,8 @@ defmodule SmmMonitor.TUI.Renderers.Common do
       defp tab_bar(model) do
         panel(height: 3, padding: 0) do
           label do
-            Enum.map(model.tabs, fn tab ->
+            Enum.map(Model.tab_labels(model), fn {tab, content} ->
               selected? = tab == model.tab
-              content = Model.tab_label(model, tab)
 
               if selected? do
                 text(content: " [#{content}] ", color: @accent, attributes: @bold)
@@ -318,6 +351,123 @@ defmodule SmmMonitor.TUI.Renderers.Common do
           end
         end
       end
+
+      # --- trends screen: the last N days ---------------------------------------
+
+      defp trends_panel(model) do
+        trends = model.trends
+        {volume_height, sentiment_height} = Model.trend_chart_heights(model)
+        width = Model.trend_column_width(model)
+        days = Model.trend_days(model)
+
+        panel(
+          title: "#{Model.trend_window_label(model)} · #{client_name(model)}",
+          height: :fill,
+          padding: 0
+        ) do
+          [
+            trends_headline(trends),
+            label(content: ""),
+            chart_heading("mentions per day", volume_note(model, trends)),
+            Enum.map(Chart.volume(days, height: volume_height, width: width), &chart_line/1),
+            label(content: ""),
+            chart_heading("average sentiment per day", sentiment_note(trends)),
+            Enum.map(
+              Chart.sentiment(days, height: sentiment_height, width: width),
+              &chart_line/1
+            )
+          ]
+        end
+      end
+
+      # The one line that has to be right even if nobody reads the charts.
+      defp trends_headline(%Trends{client_id: nil}) do
+        label(content: "  no client selected — add one on the clients screen (c)")
+      end
+
+      defp trends_headline(%Trends{total: 0} = trends) do
+        label do
+          text(content: "  nothing collected for this client ", color: @muted)
+          text(content: "in the last #{trends.window_days} days", color: @muted)
+        end
+      end
+
+      defp trends_headline(trends) do
+        label do
+          text(content: "  #{trends.total}", attributes: @bold)
+          text(content: " mentions · ", color: @muted)
+          text(content: "#{Trends.per_day(trends)}", attributes: @bold)
+          text(content: " a day · ", color: @muted)
+          text(content: "#{Trends.active_days(trends)}/#{trends.window_days}", attributes: @bold)
+          text(content: " days with mentions · ", color: @muted)
+          text(content: "avg ", color: @muted)
+
+          text(
+            content: signed(trends.average),
+            color: sentiment_color(Sentiment.label(trends.average)),
+            attributes: @bold
+          )
+        end
+      end
+
+      defp chart_heading(title, note) do
+        label do
+          text(content: "  #{title}", color: @muted, attributes: @bold)
+          text(content: "   #{note}", color: @muted)
+        end
+      end
+
+      # The narrower note goes first: on the terminal that needs it, the
+      # end of the line is the part that gets clipped away.
+      defp volume_note(model, trends) do
+        [narrow_note(model), busiest_note(trends)]
+        |> Enum.reject(&(&1 == ""))
+        |> Enum.join(" · ")
+      end
+
+      defp busiest_note(%Trends{busiest: nil}), do: ""
+
+      defp busiest_note(%Trends{busiest: day}) do
+        "busiest #{day_label(day.date)} · #{day.count} mention(s)"
+      end
+
+      # Better to say the oldest days were left off than to let the
+      # renderer clip the right-hand end, which is where this week is.
+      defp narrow_note(model) do
+        case Model.trend_days_dropped(model) do
+          0 -> ""
+          dropped -> "#{dropped} older day(s) need a wider terminal"
+        end
+      end
+
+      defp sentiment_note(%Trends{best: nil}), do: ""
+
+      # A week where every day scored the same would otherwise read
+      # "best Wed · worst Wed", which is true and useless.
+      defp sentiment_note(%Trends{best: %{average: same}, worst: %{average: same}}) do
+        "flat at #{signed(same)} every day"
+      end
+
+      defp sentiment_note(%Trends{best: best, worst: worst}) do
+        "best #{day_label(best.date)} #{signed(best.average)} · " <>
+          "worst #{day_label(worst.date)} #{signed(worst.average)}"
+      end
+
+      defp chart_line(row) do
+        label do
+          text(content: row.label, color: @muted)
+          text(content: row.bars, color: chart_color(row.style))
+        end
+      end
+
+      # Volume is one measure in one colour; sentiment is two, because
+      # which side of the zero line a day sits on is the whole point.
+      defp chart_color(:volume), do: @accent
+      defp chart_color(:positive), do: @positive
+      defp chart_color(:negative), do: @negative
+      defp chart_color(_axis), do: @muted
+
+      defp day_label(date), do: Calendar.strftime(date, "%a %-d %b")
 
       # --- config screen: the client list ---------------------------------------
 
