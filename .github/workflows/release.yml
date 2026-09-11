@@ -24,7 +24,14 @@ on:
       - "scripts/burrito-cc"
       - ".github/workflows/release.yml"
       - ".github/scripts/smoke-test.sh"
+  # Cutting a release from the Actions tab, for anyone who can't push a
+  # tag from their own machine (or would rather not).
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish, e.g. v0.1.0. Leave empty to build without publishing."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -148,7 +155,12 @@ jobs:
   publish:
     name: attach to the release
     needs: [build, smoke-macos]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # A pushed tag, or a dispatch that named one — and a dispatch may
+    # only do it from main, so nobody cuts a release from a branch by
+    # accident.
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (inputs.tag != '' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-22.04
 
     steps:
@@ -162,13 +174,16 @@ jobs:
       - name: Publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The pushed tag's own name, or the one the dispatch asked for.
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
           ls -lh dist
 
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --title "$tag" --generate-notes
+          # `--target` is what lets a dispatch create the tag: the runner's
+          # token can write it even where a developer's cannot.
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
           fi
 
-          gh release upload "$tag" dist/* --clobber
+          gh release upload "$TAG" dist/* --clobber
