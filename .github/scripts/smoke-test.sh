@@ -38,9 +38,11 @@ sandbox() {
   export XDG_CONFIG_HOME="$workspace/$phase/config"
   mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME"
 
-  # There is no terminal in CI, so nothing sets this, and termbox needs
-  # to know what it is drawing on.
-  export TERM="${TERM:-xterm-256color}"
+  # Set, not defaulted. GitHub's runners export TERM=dumb, and termbox
+  # cannot draw on a dumb terminal — it returns TB_EUNSUPPORTED_TERMINAL
+  # and the app exits. The terminal here is a synthetic one this script
+  # makes; naming it accurately is the point.
+  export TERM=xterm-256color
 
   # Past the wizard: it is a separate thing to test, and it would sit
   # waiting for a keystroke that never comes.
@@ -101,10 +103,15 @@ boots() {
 under_a_terminal() {
   local log="$1" command="$2"
 
+  # A pty created with no terminal behind it is 0x0, and a dashboard has
+  # nowhere to draw. `stty` sizes it from the inside, which is the only
+  # place either spelling of `script` lets you.
+  local sized="stty rows 40 cols 120 2>/dev/null; exec $command"
+
   if script --version 2>&1 | grep -q util-linux; then
-    script -qec "$command" "$log"
+    script -qec "$sized" "$log"
   else
-    script -q "$log" /bin/sh -c "$command"
+    script -q "$log" /bin/sh -c "$sized"
   fi
 }
 
@@ -130,8 +137,13 @@ draws() {
   local screen="$workspace/screen.txt"
   tr -d '\000' < "$workspace/tty.log" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' > "$screen"
 
-  echo "--- what appeared on screen"
+  echo "--- what appeared on screen (first 2KB)"
   head -c 2000 "$screen"
+  echo
+  # Whatever went wrong is at the end, and truncating to the first 2KB is
+  # how a CI log ends up showing a successful migration and no reason.
+  echo "--- and the last 2KB"
+  tail -c 2000 "$screen"
   echo
 
   # The app's own diagnosis, when it managed to make one. Preferred over
