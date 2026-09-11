@@ -48,9 +48,30 @@ NIF_DEPS=(ex_termbox exqlite)
 export MIX_ENV=prod
 export BURRITO_TARGET="$TARGET"
 
+# A production build, in its own build directory. The NIFs compiled here
+# are for another libc, and `_build/prod` is where the *server* release
+# is assembled from on the same machine — the two sharing a directory is
+# all it takes to leave a systemd install with a termbox library it
+# cannot load ("invalid ELF header"). Burrito, meanwhile, insists on
+# MIX_ENV=prod: anything else gets a debug wrapper four times the size.
+export MIX_BUILD_PATH="$(pwd)/_build/standalone"
+
+# ex_termbox's Makefile is timestamp-driven and its output lives in the
+# dep's own priv/, which every environment shares. So a rebuild has to
+# start from `make clean` — without it `make` looks at a library newer
+# than its sources, decides there is nothing to do, and the last
+# machine's libc quietly wins.
+compile_nifs() {
+  (cd deps/ex_termbox && make clean >/dev/null 2>&1) || true
+  mix deps.compile "${NIF_DEPS[@]}" --force
+}
+
+# The cross-compiled libraries must not outlive this script: `mix test`
+# on this machine would load one and fail on a foreign libc.
 restore_native_nifs() {
   echo "==> restoring native NIFs"
-  env -u CC -u BURRITO_CC_TARGET mix deps.compile "${NIF_DEPS[@]}" --force >/dev/null 2>&1 || true
+  env -u CC -u BURRITO_CC_TARGET -u MIX_BUILD_PATH MIX_ENV=dev bash -c \
+    'cd deps/ex_termbox && make clean >/dev/null 2>&1; cd ../.. && mix deps.compile ex_termbox exqlite --force >/dev/null'
 }
 
 trap restore_native_nifs EXIT
@@ -60,8 +81,10 @@ mix deps.get
 mix deps.compile
 
 echo "==> building NIFs for $TRIPLE"
-CC="$(pwd)/scripts/burrito-cc" BURRITO_CC_TARGET="$TRIPLE" \
-  mix deps.compile "${NIF_DEPS[@]}" --force
+export CC="$(pwd)/scripts/burrito-cc"
+export BURRITO_CC_TARGET="$TRIPLE"
+compile_nifs
+unset CC BURRITO_CC_TARGET
 
 echo "==> packaging $TARGET"
 mix release standalone --overwrite
