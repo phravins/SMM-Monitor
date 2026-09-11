@@ -6,31 +6,18 @@ frontend, just a TUI you can leave running in a pane, a SQLite file
 behind it, Slack alerts when something needs attention, and a PDF a
 client can actually be handed.
 
-```
- SMM MONITOR · watching: realoffice, real office · MOCK DATA · updated 13:15:13
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ [all (72)]   reddit (18)    youtube (18)    twitter (18)    instagram (18)   │
-└──────────────────────────────────────────────────────────────────────────────┘
-┌─last 1d · all────────────────────────────────────────────────────────────────┐
-│mentions: 72   net sentiment: +21                                             │
-│████████████▒▒▒▒▒▒▒▒▒█████████                                                │
-│  positive 41% (29)   neutral 30% (22)   negative 29% (21)                     │
-└──────────────────────────────────────────────────────────────────────────────┘
-┌─recent mentions · 1-27 of 72─────────────────────────────────────────────────┐
-│PLATFORM    AUTHOR             MENTION                        SENTIMENT   AGE │
-│youtube     @toolteardown      realoffice pricing page upda…   ▲ 1      1m ago │
-│twitter     @devrel_dan        realoffice dashboards are br…   ▲ 2     27m ago │
-│instagram   @maya.makes        not great — realoffice kept …   ▼ 2     33m ago │
-│reddit      u/anna_ops         shout out to the realoffice …   ▲ 2     46m ago │
-└──────────────────────────────────────────────────────────────────────────────┘
- all twitter instagram reddit youtube · j/k scroll · q quit · reddit:mock …
-```
+![The SMM Monitor dashboard: a header reading MOCK DATA, tabs for each
+platform, a sentiment summary and a table of recent
+mentions](docs/images/dashboard.png)
 
-The `MOCK DATA` in that header is not decoration. Until you connect an
-account, every mention you see is invented — see
-[Is any of this real? Not yet](#is-any-of-this-real-not-yet) for what
-that means and [Connecting your accounts](#connecting-your-accounts) for
-how to change it.
+*The dashboard, a minute after you install it.*
+
+The `MOCK DATA` in that header is not decoration: every mention in that
+table was invented by the app. Until you connect an account, all of them
+are — see [Is any of this real? Not yet](#is-any-of-this-real-not-yet)
+for what that means, and
+[Connecting your accounts](#connecting-your-accounts) for how to change
+it.
 
 ## Quick start
 
@@ -131,6 +118,11 @@ dashboard looks cramped.
 | `R` | **Write a report** for the selected client (see below) |
 | `q` | Quit (or `Ctrl-C`) |
 
+![The reddit tab, showing only Reddit mentions, with the tab highlighted
+in the bar at the top](docs/images/reddit-tab.png)
+
+*Pressing `r` narrows the table to one platform. `a` puts them all back.*
+
 On the clients screen, `j`/`k` move between clients, `h`/`l` between a
 client's fields, `e` or `Enter` starts editing, `+` adds a client, `d`
 removes one (twice — it asks first), `p` pauses one, `s` switches the
@@ -140,6 +132,10 @@ including `q` and the tab letters — so a brand term like "quality" or
 "clarity" goes in fine. `Ctrl-C` always quits.
 
 ### First run, and doing it again
+
+![The first-run setup screen asking "What should I watch for?" with a
+text field for a brand or keyword, and a footer offering Enter to
+continue or Esc to skip and watch demo data](docs/images/first-run.png)
 
 The first launch asks what to watch and, optionally, for Reddit and
 YouTube keys. Everything is skippable: `Esc` on the first question means
@@ -211,7 +207,18 @@ Before connecting anything, make sure it is searching for the right
 words. A fresh install watches `realoffice, real office`, which are
 placeholders, not yours.
 
-Press `c` for the clients screen, then:
+Press `c` for the clients screen:
+
+![The clients screen showing one client called OSWORKS with its brand
+terms, subreddits and alert thresholds, and a PLATFORM MODE panel
+listing reddit, youtube, twitter and instagram as
+mock](docs/images/clients.png)
+
+*The **PLATFORM MODE** panel at the bottom is worth knowing about: it
+tells you, at a glance, which platforms are real and which are still
+demo data.*
+
+Then:
 
 | Key | What it does |
 | --- | --- |
@@ -935,35 +942,14 @@ Every other screen answers "what is being said right now". Press **`h`**
 (for history) and you get the other question: is this getting better or
 worse?
 
-```
- SMM MONITOR · Demo Ltd (paused) 3/3 [[/]] · demoltd · MOCK DATA · updated 06:28
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  all    reddit    youtube    twitter    instagram   [trends]   config        │
-└──────────────────────────────────────────────────────────────────────────────┘
-┌─last 14 days · Demo Ltd (paused)─────────────────────────────────────────────┐
-│  143 mentions · 10.2 a day · 14/14 days with mentions · avg +0.12            │
-│                                                                              │
-│  mentions per day   busiest Tue 8 Sep · 23 mention(s)                        │
-│ 23 ┤                                                  ████                   │
-│    ┤                                             ████ ████                   │
-│    ┤                                        ▄▄▄▄ ████ ████ ████              │
-│    ┤     ▄▄▄▄           ████                ████ ████ ████ ████ ████ ▄▄▄▄    │
-│    ┤▄▄▄▄ ████      ████ ████           ████ ████ ████ ████ ████ ████ ████    │
-│  3 ┤████ ████ ████ ████ ████ ████ ▄▄▄▄ ████ ████ ████ ████ ████ ████ ████    │
-│  0 └─────────────────────────────────────────────────────────────────────    │
-│    29 Aug                          5 Sep                          11 Sep     │
-│                                                                              │
-│  average sentiment per day   best Thu 10 Sep +0.45 · worst Fri 4 Sep -0.50   │
-│ +1 ┤                                                                         │
-│    ┤▄▄▄▄ ▄▄▄▄ ▄▄▄▄ ▄▄▄▄                          ▄▄▄▄ ▄▄▄▄ ▄▄▄▄ ████ ▄▄▄▄    │
-│  0 ┼─────────────────────────────────────────────────────────────────────    │
-│    ┤                    ▀▀▀▀ ▀▀▀▀ ████ ████ ▀▀▀▀                             │
-│ -1 ┤                                                                         │
-│    29 Aug                          5 Sep                          11 Sep     │
-│                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
- w window (7/14/30d) · [/] client · Report · a back · q quit · from stored histo
-```
+![The trends screen: a bar chart of mentions per day over fourteen days
+with one tall spike, and below it a chart of average sentiment per day
+with a single negative day in red](docs/images/trends.png)
+
+*Two charts over the same window: how much was said each day, and how it
+felt. The spike on the right is the kind of thing the alert banner at the
+top fires on.*
+
 
 Two charts, one column per day, for whichever client is selected:
 
