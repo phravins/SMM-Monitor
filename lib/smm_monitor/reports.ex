@@ -22,7 +22,7 @@ defmodule SmmMonitor.Reports do
   trend.
   """
 
-  alias SmmMonitor.Reports.{Period, Report}
+  alias SmmMonitor.Reports.{PDF, Period, Report, Writer}
   alias SmmMonitor.{Client, Clients, Mention, Persistence}
 
   # Enough to read over coffee; more than this and nobody reads any.
@@ -81,6 +81,46 @@ defmodule SmmMonitor.Reports do
     case lookup(client_id, opts) do
       nil -> {:error, :unknown_client}
       client -> build(client, period, opts)
+    end
+  end
+
+  @doc """
+  Builds a client's report and writes it to disk.
+
+  The whole job in one call, for the callers that want the files rather
+  than the numbers: the dashboard's `R` key, the weekly schedule, and a
+  release, where there is no `mix` to run:
+
+      bin/smm_monitor rpc 'SmmMonitor.Reports.generate("acme-corp", days: 7)'
+
+  Takes `:days` (default 7) or a `:period`, and `:formats` (default:
+  whatever this machine can produce). Returns `{:ok, paths}`.
+  """
+  @spec generate(String.t() | Client.t(), keyword()) :: {:ok, [Path.t()]} | {:error, term()}
+  def generate(client_or_id, opts \\ []) do
+    period =
+      Keyword.get_lazy(opts, :period, fn -> Period.last_days(Keyword.get(opts, :days, 7)) end)
+
+    formats = Keyword.get_lazy(opts, :formats, &available_formats/0)
+
+    with {:ok, report} <- build(client_or_id, period, opts) do
+      Writer.write(report, formats, opts)
+    end
+  end
+
+  @doc """
+  The formats this machine can actually produce.
+
+  PDF when the Python toolchain is there, CSV always: a server without
+  it should still get its data, rather than nothing at all. The `mix`
+  task deliberately doesn't use this — someone at a terminal asking for
+  a PDF wants to be told what to install, not quietly handed a CSV.
+  """
+  @spec available_formats() :: [:pdf | :csv]
+  def available_formats do
+    case PDF.available() do
+      :ok -> [:pdf, :csv]
+      {:error, _reason} -> [:csv]
     end
   end
 

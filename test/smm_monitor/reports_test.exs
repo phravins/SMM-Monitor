@@ -354,6 +354,57 @@ defmodule SmmMonitor.ReportsTest do
     end
   end
 
+  describe "generate/2" do
+    setup do
+      dir = Path.join(System.tmp_dir!(), "smm-generate-#{System.unique_integer([:positive])}")
+      on_exit(fn -> File.rm_rf(dir) end)
+
+      %{dir: dir}
+    end
+
+    test "builds and writes in one call", %{client: client, dir: dir, opts: opts} do
+      store(client, days_ago: 1)
+
+      assert {:ok, paths} = Reports.generate(client, opts ++ [days: 7, formats: [:csv], dir: dir])
+
+      assert [path] = paths
+      assert File.read!(path) =~ "acme-corp"
+    end
+
+    test "covers the last seven days unless told otherwise", %{
+      client: client,
+      dir: dir,
+      opts: opts
+    } do
+      {:ok, [path]} = Reports.generate(client, opts ++ [formats: [:csv], dir: dir])
+
+      today = Date.utc_today()
+
+      assert Path.basename(path) == "acme-corp_#{Date.add(today, -6)}_#{today}.csv"
+    end
+
+    test "takes an explicit period", %{client: client, dir: dir, opts: opts, period: period} do
+      {:ok, [path]} = Reports.generate(client, opts ++ [period: period, formats: [:csv], dir: dir])
+
+      assert Path.basename(path) == "acme-corp_2026-09-05_2026-09-11.csv"
+    end
+
+    test "refuses an unknown client rather than writing a file", %{dir: dir, opts: opts} do
+      assert {:error, :unknown_client} =
+               Reports.generate("nobody", opts ++ [formats: [:csv], dir: dir])
+
+      refute File.exists?(dir)
+    end
+  end
+
+  describe "available_formats/0" do
+    test "always includes the data, whatever this machine can render" do
+      # Losing the formatted document to a missing Python install is a
+      # nuisance; losing the numbers is a failure.
+      assert :csv in Reports.available_formats()
+    end
+  end
+
   describe "excerpt/2" do
     test "collapses the whitespace a forum post arrives with" do
       mention = mention(text: "line one\n\n   line   two")

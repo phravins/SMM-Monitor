@@ -31,7 +31,7 @@ defmodule SmmMonitor.Reports.Scheduler do
   require Logger
 
   alias SmmMonitor.Reports
-  alias SmmMonitor.Reports.{PDF, Period, Writer}
+  alias SmmMonitor.Reports.{Period, Writer}
 
   @check_interval_ms :timer.hours(1)
   @default_day 1
@@ -113,7 +113,7 @@ defmodule SmmMonitor.Reports.Scheduler do
        written: state.written,
        last_run_at: state.last_run_at,
        directory: Writer.dir(),
-       formats: formats()
+       formats: Reports.available_formats()
      }, state}
   end
 
@@ -151,20 +151,7 @@ defmodule SmmMonitor.Reports.Scheduler do
      }}
   end
 
-  defp generate(client, period) do
-    with {:ok, report} <- Reports.build(client, period) do
-      Writer.write(report, formats(), [])
-    end
-  end
-
-  # PDF when the toolchain is present, CSV always. A server without
-  # Python should still get its weekly data rather than nothing.
-  defp formats do
-    case PDF.available() do
-      :ok -> [:pdf, :csv]
-      {:error, _reason} -> [:csv]
-    end
-  end
+  defp generate(client, period), do: Reports.generate(client, period: period)
 
   defp weekly_day, do: SmmMonitor.config(:weekly_report_day, @default_day)
   defp weekly_hour, do: SmmMonitor.config(:weekly_report_hour, @default_hour)

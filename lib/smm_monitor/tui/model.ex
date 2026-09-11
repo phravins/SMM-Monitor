@@ -436,22 +436,12 @@ defmodule SmmMonitor.TUI.Model do
   end
 
   defp write_report(model, client) do
-    period = Reports.Period.last_days(7)
+    case Reports.generate(client, days: 7) do
+      {:ok, paths} ->
+        %{model | flash: {:ok, "wrote #{Enum.map_join(paths, " and ", &Path.basename/1)}"}}
 
-    with {:ok, report} <- Reports.build(client, period),
-         {:ok, paths} <- Reports.Writer.write(report, formats(), []) do
-      %{model | flash: {:ok, "wrote #{Enum.map_join(paths, " and ", &Path.basename/1)}"}}
-    else
-      {:error, reason} -> %{model | flash: {:error, report_error(reason)}}
-    end
-  end
-
-  # PDF when the toolchain is there, CSV always — a missing Python
-  # install should cost you the formatted report, not the data.
-  defp formats do
-    case Reports.PDF.available() do
-      :ok -> [:pdf, :csv]
-      {:error, _reason} -> [:csv]
+      {:error, reason} ->
+        %{model | flash: {:error, report_error(reason)}}
     end
   end
 
