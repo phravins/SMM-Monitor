@@ -215,6 +215,30 @@ defmodule SmmMonitor.TrendsTest do
     end
   end
 
+  describe "the query the screen runs" do
+    test "seeks straight to the window instead of scanning the client's history" do
+      # The screen's whole promise is that it stays fast as history
+      # accumulates, and that rests on one index. A plan that says SCAN,
+      # or that only matches on client_id, means every mention a client
+      # has ever collected is being walked to draw thirty columns.
+      {:ok, %{rows: rows}} =
+        Repo.query("""
+        EXPLAIN QUERY PLAN
+        SELECT date(m0."source_timestamp"), count(m0."id"), avg(m0."sentiment_value")
+        FROM "mentions" AS m0
+        WHERE (m0."source_timestamp" >= '2026-09-01' AND m0."source_timestamp" <= '2026-09-30')
+          AND (m0."client_id" = 'acme')
+        GROUP BY date(m0."source_timestamp")
+        """)
+
+      plan = rows |> Enum.map_join(" ", &List.last/1)
+
+      assert plan =~ "mentions_client_id_source_timestamp_index"
+      assert plan =~ "client_id=? AND source_timestamp>? AND source_timestamp<?"
+      refute plan =~ "SCAN"
+    end
+  end
+
   # --- helpers --------------------------------------------------------------
 
   defp build(client_id, days), do: Trends.for_client(client_id, days: days, today: @today)
