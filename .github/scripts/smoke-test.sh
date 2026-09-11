@@ -2,11 +2,16 @@
 #
 # Proves a built binary actually runs, rather than merely existing.
 #
-# Starts it headless against throwaway directories, gives it a few
-# seconds, and checks it got far enough to create its database — which
-# means the payload unpacked, the Erlang runtime started, the SQLite NIF
-# loaded and the migrations ran. The terminal UI is the one part this
-# can't reach: CI has no terminal to draw on.
+# Starts it headless against throwaway directories and waits for the line
+# that means the supervision tree is up — by which point the payload has
+# unpacked, the Erlang runtime has started, the SQLite NIF has loaded and
+# the migrations have run. The terminal UI is the one part this can't
+# reach: CI has no terminal to draw on.
+#
+# Waiting for the *database file* instead is a race, and it cost a red
+# build to learn: SQLite creates the file before the migrations finish
+# and well before the client list is read, so on a fast machine this
+# killed the app mid-boot and then complained the boot was incomplete.
 set -euo pipefail
 
 binary="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
@@ -26,10 +31,19 @@ pid=$!
 
 database="$XDG_DATA_HOME/smm_monitor/mentions.db"
 
+# "clients: monitoring N client(s)" is the last thing boot logs, so it is
+# the signal that everything before it worked.
 for _ in $(seq 1 60); do
-  if [ -f "$database" ]; then
+  if grep -q "clients: monitoring" "$workspace/out.log" 2>/dev/null; then
     break
   fi
+
+  # Stop waiting the moment it dies — no sense burning a minute on a
+  # process that already gave up.
+  if ! kill -0 "$pid" 2>/dev/null; then
+    break
+  fi
+
   sleep 1
 done
 
@@ -44,11 +58,14 @@ if [ ! -f "$database" ]; then
   exit 1
 fi
 
-for needle in "Migrated" "monitoring"; do
-  if ! grep -q "$needle" "$workspace/out.log"; then
-    echo "==> FAILED: expected '$needle' in the output"
-    exit 1
-  fi
-done
+if ! grep -qE "Migrated|Migrations already up" "$workspace/out.log"; then
+  echo "==> FAILED: it never ran its migrations"
+  exit 1
+fi
+
+if ! grep -q "clients: monitoring" "$workspace/out.log"; then
+  echo "==> FAILED: it never finished starting (no client list read)"
+  exit 1
+fi
 
 echo "==> OK: unpacked, started, migrated and opened its database"
