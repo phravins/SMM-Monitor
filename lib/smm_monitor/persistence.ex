@@ -308,6 +308,74 @@ defmodule SmmMonitor.Persistence do
     :exit, _reason -> nil
   end
 
+  @doc """
+  Mention volume and average sentiment per day, for one client.
+
+  Grouped in SQL rather than in Elixir. The trends screen asks for this
+  on every refresh, and the alternative — loading a month of mentions to
+  count them — reads thousands of rows across the wire to produce thirty
+  numbers. Here the database returns one row per day and the work stays
+  proportional to the *window*, not to how much history has accumulated
+  behind it.
+
+  Days are UTC, and taken from when the mention was published rather
+  than when we collected it: that is the day the client would say it
+  happened, and it matches what the reports say about the same period.
+
+  Returns only days that have mentions — a caller wanting a gap-free
+  series should zero-fill from the period, as `SmmMonitor.Trends` does.
+  Rows come back oldest first.
+  """
+  @spec daily_stats(DateTime.t(), DateTime.t(), keyword()) :: [map()]
+  def daily_stats(from, to, opts \\ []) do
+    repo = Keyword.get(opts, :repo, Repo)
+
+    MentionRecord
+    |> where([m], m.source_timestamp >= ^from and m.source_timestamp <= ^to)
+    |> platform_filter(Keyword.get(opts, :platform, :all))
+    |> client_filter(Keyword.get(opts, :client, :all))
+    |> group_by([m], fragment("date(?)", m.source_timestamp))
+    |> order_by([m], fragment("date(?)", m.source_timestamp))
+    |> select([m], %{
+      day: fragment("date(?)", m.source_timestamp),
+      count: count(m.id),
+      # Rows written before scoring became numeric have a null value;
+      # avg() skips them, which is right — a guessed score would move
+      # the line without anybody having said anything.
+      average: avg(m.sentiment_value),
+      positive: fragment("sum(case when ? = 'positive' then 1 else 0 end)", m.sentiment),
+      negative: fragment("sum(case when ? = 'negative' then 1 else 0 end)", m.sentiment)
+    })
+    |> repo.all()
+    |> Enum.map(&decode_day/1)
+  rescue
+    error ->
+      Logger.warning("database: could not read the daily series (#{inspect(error)})")
+      []
+  catch
+    :exit, reason ->
+      Logger.warning("database: could not read the daily series (#{inspect(reason)})")
+      []
+  end
+
+  # SQLite hands back the grouped day as text and the counts as integers;
+  # avg() comes back as a float, or nil for a day whose rows all predate
+  # numeric scoring.
+  defp decode_day(row) do
+    %{
+      date: Date.from_iso8601!(row.day),
+      count: row.count,
+      average: average(row.average),
+      positive: row.positive || 0,
+      negative: row.negative || 0,
+      neutral: row.count - (row.positive || 0) - (row.negative || 0)
+    }
+  end
+
+  defp average(nil), do: 0.0
+  defp average(value) when is_float(value), do: Float.round(value, 3)
+  defp average(value), do: value / 1
+
   defp platform_filter(query, :all), do: query
   defp platform_filter(query, platform), do: where(query, [m], m.platform == ^to_string(platform))
 
