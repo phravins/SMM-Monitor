@@ -14,7 +14,7 @@ defmodule SmmMonitor.TUI.Model do
   """
 
   alias SmmMonitor.Alerts
-  alias SmmMonitor.{Client, Clients}
+  alias SmmMonitor.{Client, Clients, Reports}
   alias SmmMonitor.Client.AlertConfig
   alias SmmMonitor.Monitor
   alias SmmMonitor.Processing.Sentiment
@@ -221,6 +221,11 @@ defmodule SmmMonitor.TUI.Model do
   def handle_key(%__MODULE__{tab: :config} = model, {:char, ?p}), do: toggle_active(model)
   def handle_key(%__MODULE__{tab: :config} = model, {:char, ?s}), do: view_highlighted(model)
 
+  # `R` from anywhere: a report is about the client you are looking at,
+  # and having to find the config screen first would be a detour through
+  # a settings page to do the most client-facing thing in the app.
+  def handle_key(%__MODULE__{} = model, {:char, ?R}), do: generate_report(model)
+
   # `d` asks the first time and confirms the second, so a client and its
   # mentions can't be lost to one keystroke.
   def handle_key(%__MODULE__{tab: :config, confirm_remove: nil} = model, {:char, ?d}),
@@ -400,6 +405,57 @@ defmodule SmmMonitor.TUI.Model do
   def scrollable?(%__MODULE__{} = model), do: length(model.mentions) > model.rows
 
   # --- client selection -----------------------------------------------------
+
+  @doc """
+  Writes a report for the selected client over the last seven days.
+
+  Runs in the calling process rather than a task: the render takes a
+  second or two, and a dashboard that silently carried on while a file
+  may or may not have appeared would be worse than one that pauses and
+  then says where it went.
+
+  Read-only sessions are refused. A remote viewer writing files onto the
+  host's disk is not a thing a read-only session should be able to do.
+  """
+  @spec generate_report(t()) :: t()
+  def generate_report(%__MODULE__{read_only: true} = model) do
+    %{
+      model
+      | flash: {:error, "read-only session — reports are generated from the host terminal"}
+    }
+  end
+
+  def generate_report(%__MODULE__{} = model) do
+    case current_client(model) do
+      nil ->
+        %{model | flash: {:error, "no client selected"}}
+
+      client ->
+        write_report(model, client)
+    end
+  end
+
+  defp write_report(model, client) do
+    period = Reports.Period.last_days(7)
+
+    with {:ok, report} <- Reports.build(client, period),
+         {:ok, paths} <- Reports.Writer.write(report, formats(), []) do
+      %{model | flash: {:ok, "wrote #{Enum.map_join(paths, " and ", &Path.basename/1)}"}}
+    else
+      {:error, reason} -> %{model | flash: {:error, report_error(reason)}}
+    end
+  end
+
+  # PDF when the toolchain is there, CSV always — a missing Python
+  # install should cost you the formatted report, not the data.
+  defp formats do
+    case Reports.PDF.available() do
+      :ok -> [:pdf, :csv]
+      {:error, _reason} -> [:csv]
+    end
+  end
+
+  defp report_error(reason), do: Reports.PDF.explain(reason)
 
   @doc "The client this session is looking at, or `nil` if there are none."
   @spec current_client(t()) :: Client.t() | nil
