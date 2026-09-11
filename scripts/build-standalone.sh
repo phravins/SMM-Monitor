@@ -66,12 +66,32 @@ compile_nifs() {
   mix deps.compile "${NIF_DEPS[@]}" --force
 }
 
-# The cross-compiled libraries must not outlive this script: `mix test`
-# on this machine would load one and fail on a foreign libc.
+# The cross-compiled libraries must not outlive this script on a machine
+# somebody works on: `mix test` would load one and fail on a foreign
+# libc. On a CI runner there is no next command and no dev build to
+# rebuild into, so there is nothing to put back.
+#
+# Never fatal, whatever happens. This runs from an EXIT trap, so a
+# failure here would fail a build that has already succeeded — which is
+# precisely what it did: the binaries were built, the tidy-up fell over,
+# and the job went red.
 restore_native_nifs() {
+  if [ -n "${CI:-}" ] || [ ! -d _build/dev ]; then
+    return 0
+  fi
+
   echo "==> restoring native NIFs"
-  env -u CC -u BURRITO_CC_TARGET -u MIX_BUILD_PATH MIX_ENV=dev bash -c \
-    'cd deps/ex_termbox && make clean >/dev/null 2>&1; cd ../.. && mix deps.compile ex_termbox exqlite --force >/dev/null'
+
+  (cd deps/ex_termbox && make clean >/dev/null 2>&1) || true
+
+  if ! (
+    unset CC BURRITO_CC_TARGET MIX_BUILD_PATH BURRITO_TARGET
+    export MIX_ENV=dev
+    mix deps.compile ex_termbox exqlite --force >/dev/null 2>&1
+  ); then
+    echo "    couldn't rebuild them for this machine. Before running the"
+    echo "    test suite: mix deps.compile ex_termbox exqlite --force"
+  fi
 }
 
 trap restore_native_nifs EXIT
