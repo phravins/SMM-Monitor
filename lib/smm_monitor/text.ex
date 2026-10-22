@@ -1,0 +1,126 @@
+defmodule SmmMonitor.Text do
+  @moduledoc """
+  Makes text from strangers safe to put on a terminal.
+
+  Every mention this app collects was written by somebody we have never
+  met, and it is drawn straight onto a terminal. A terminal is not a
+  passive display: bytes below 0x20 are commands to it. Ratatouille
+  turns a string into one cell per grapheme and termbox writes each
+  cell's codepoint out verbatim, so an ESC in a Reddit comment is an ESC
+  on the analyst's screen.
+
+  That is not theoretical. A post reading
+
+      great tool! \\e]0;PWNED BY A REDDIT POST\\a\\e[2J
+
+  retitled the terminal window and blanked the dashboard — proved
+  end to end against this app before this module existed.
+
+  What an attacker gets without this: the window title (OSC 0), a
+  cleared or scrolled screen, cursor moves that overwrite neighbouring
+  rows — so a negative mention can be painted over a positive one, or
+  the LIVE indicator forged — and, on terminals that allow it, the
+  clipboard (OSC 52), which is how a dashboard becomes a way to put a
+  command on somebody's clipboard.
+
+  So nothing but printable text reaches the screen.
+
+  ## What is removed
+
+    * C0 controls (0x00-0x1F) and DEL — ESC, BEL and friends. Tab,
+      newline and carriage return are legitimate in a post, so they
+      become spaces rather than vanishing: the table is one line a row.
+    * C1 controls (0x80-0x9F), which some terminals accept as an
+      alternative encoding of the same commands.
+    * Bidirectional overrides (U+202A-U+202E, U+2066-U+2069) and the
+      direction marks. These reorder displayed text without changing it
+      — the "Trojan Source" trick — so "refund" can be made to read
+      "dnufer" or a URL made to appear to point somewhere else.
+
+  Everything else is kept, emoji and every script included: this is a
+  social media tool and the content is the point.
+  """
+
+  # Tab, newline and carriage return carry meaning in a post; the rest of
+  # C0 does not survive.
+  @as_space [?\t, ?\n, ?\r, ?\v, ?\f]
+
+  @doc """
+  Strips terminal control sequences and bidi overrides, and tidies the
+  whitespace that is left.
+
+      iex> SmmMonitor.Text.safe("hello")
+      "hello"
+
+      iex> SmmMonitor.Text.safe("great tool! \\e]0;PWNED\\a")
+      "great tool! ]0;PWNED"
+
+      iex> SmmMonitor.Text.safe("line one\\nline two")
+      "line one line two"
+
+      iex> SmmMonitor.Text.safe(nil)
+      nil
+  """
+  @spec safe(String.t()) :: String.t()
+  @spec safe(nil) :: nil
+  def safe(nil), do: nil
+
+  def safe(text) when is_binary(text) do
+    text
+    # Invalid UTF-8 from an API would crash String.graphemes/1 further
+    # down; a replacement character is a better answer than a stack trace.
+    |> sanitize_encoding()
+    |> String.to_charlist()
+    |> Enum.map(&replace/1)
+    |> Enum.reject(&is_nil/1)
+    |> List.to_string()
+    |> collapse_whitespace()
+  end
+
+  def safe(other), do: other |> to_string() |> safe()
+
+  @doc """
+  Whether `text` carries anything this module would strip.
+
+  For tests and for anyone who wants to count how often it happens
+  rather than silently clean it up.
+  """
+  @spec safe?(String.t()) :: boolean()
+  def safe?(text) when is_binary(text), do: safe(text) == collapse_whitespace(text)
+
+  defp replace(char) when char in @as_space, do: ?\s
+  # C0 and DEL.
+  defp replace(char) when char < 0x20 or char == 0x7F, do: nil
+  # C1: a second spelling of the same control codes.
+  defp replace(char) when char >= 0x80 and char <= 0x9F, do: nil
+  # Bidi overrides and isolates, and the direction marks.
+  defp replace(char) when char in 0x202A..0x202E, do: nil
+  defp replace(char) when char in 0x2066..0x2069, do: nil
+  defp replace(char) when char in [0x200E, 0x200F], do: nil
+  defp replace(char), do: char
+
+  defp sanitize_encoding(text) do
+    if String.valid?(text) do
+      text
+    else
+      text
+      |> :unicode.characters_to_binary(:utf8, :utf8)
+      |> case do
+        binary when is_binary(binary) -> binary
+        _invalid -> replace_invalid(text)
+      end
+    end
+  end
+
+  defp replace_invalid(text) do
+    for <<byte <- text>>, into: "" do
+      if byte < 0x80, do: <<byte>>, else: "?"
+    end
+  end
+
+  defp collapse_whitespace(text) do
+    text
+    |> String.replace(~r/[ \t]+/u, " ")
+    |> String.trim()
+  end
+end

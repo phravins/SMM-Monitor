@@ -7,6 +7,8 @@ defmodule SmmMonitor.Mention do
   That normalisation boundary is what keeps adding a platform cheap.
   """
 
+  alias SmmMonitor.Text
+
   @enforce_keys [:id, :platform, :author, :text, :timestamp]
   defstruct [
     # Stable, platform-scoped id. Used to de-duplicate across polls.
@@ -66,9 +68,13 @@ defmodule SmmMonitor.Mention do
       id: to_string(Map.get(attrs, :id) || generate_id()),
       platform: attrs |> Map.fetch!(:platform) |> to_atom(),
       client_id: to_string(Map.get(attrs, :client_id) || default_client_id()),
-      author: to_string(Map.get(attrs, :author, "unknown")),
-      text: to_string(Map.get(attrs, :text, "")),
-      url: attrs[:url],
+      # Everything a stranger wrote is cleaned once, here, on the way in.
+      # This is the only door every fetcher comes through, so the
+      # terminal, the database, the CSV, the PDF and the Slack message
+      # all get text that cannot drive a terminal. See SmmMonitor.Text.
+      author: attrs |> Map.get(:author, "unknown") |> to_string() |> Text.safe(),
+      text: attrs |> Map.get(:text, "") |> to_string() |> Text.safe(),
+      url: Text.safe(attrs[:url]),
       timestamp: parse_timestamp(Map.get(attrs, :timestamp)),
       sentiment: Map.get(attrs, :sentiment, :neutral),
       sentiment_value: Map.get(attrs, :sentiment_value, 0.0),
