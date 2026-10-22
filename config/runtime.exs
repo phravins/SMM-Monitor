@@ -59,11 +59,24 @@ end
 
 alias SmmMonitor.RuntimeConfig, as: RC
 
-# `SMM_MOCK_MODE=false` switches the fetchers over to the real HTTP calls.
-# Any platform missing credentials falls back to mock data on its own, so
-# flipping this off never takes the dashboard down.
+# Demo data is now something you ask for, not what you get.
+#
+# This used to default to true, so a fresh install filled itself with
+# invented posts and said MOCK DATA in the corner. People read the
+# dashboard, not the corner. The invented mentions went into the same
+# database as real ones and skewed the trends, the alerts and every
+# report exported afterwards.
+#
+# So the default is off: without credentials the app collects nothing
+# and says so. `SMM_DEMO=1` (or the older `SMM_MOCK_MODE=true`) asks for
+# the invented data back - useful for a demo or a screenshot, and now a
+# deliberate choice. The setup wizard's "skip and watch demo data" sets
+# it too, which is a person choosing it with their eyes open.
 config :smm_monitor,
-  mock_mode: RC.bool("SMM_MOCK_MODE", true),
+  # The test suite's only data source is fixtures - no test may call a
+  # real API - so it keeps the old default. runtime.exs runs after
+  # config/test.exs, so this is the only place that can decide it.
+  mock_mode: RC.bool("SMM_DEMO", RC.bool("SMM_MOCK_MODE", config_env() == :test)),
   keywords: RC.list("SMM_KEYWORDS", ["realoffice", "real office"]),
   poll_interval_ms: RC.integer("SMM_POLL_INTERVAL_MS", 30_000),
   max_mentions: RC.integer("SMM_MAX_MENTIONS", 2_000),

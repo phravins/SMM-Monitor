@@ -285,9 +285,16 @@ defmodule SmmMonitor.Fetchers.Worker do
   end
 
   # Mock mode is a config flag — global, or per-platform so one platform can
-  # go live while the rest stay on fixtures. A platform that *should* be live
-  # but has no credentials also falls back to fixtures: an unconfigured key
-  # should degrade one tab, not empty the dashboard.
+  # go live while the rest stay on fixtures.
+  #
+  # A platform that should be live but has no credentials collects
+  # nothing. It used to invent mentions instead, on the reasoning that an
+  # unconfigured key should degrade one tab rather than empty the
+  # dashboard. That reasoning was wrong: invented posts are
+  # indistinguishable from collected ones once they are in the table, and
+  # they are written to the same database, so they skew the trends, the
+  # alerts and any report exported afterwards. An empty tab that says
+  # why is worth more than a full one that is making it up.
   defp resolve_mode(state, context) do
     cond do
       SmmMonitor.mock_platform?(context.platform) ->
@@ -297,7 +304,7 @@ defmodule SmmMonitor.Fetchers.Worker do
         {:live, %{state | credentials_warned: false}}
 
       true ->
-        {:mock, warn_missing_credentials(state)}
+        {:unconfigured, warn_missing_credentials(state)}
     end
   end
 
@@ -306,13 +313,20 @@ defmodule SmmMonitor.Fetchers.Worker do
 
   defp warn_missing_credentials(state) do
     Logger.warning(
-      "#{state.platform} is configured for live data but its credentials are missing " <>
-        "or incomplete - falling back to mock data. See the README for the " <>
-        "environment variables this platform needs."
+      "#{state.platform}: no credentials, so nothing is being collected from it. " <>
+        "Add them with `c` then `S` in the dashboard (Reddit and YouTube), or set " <>
+        "this platform's environment variables. Nothing will be invented in the " <>
+        "meantime."
     )
 
     %{state | credentials_warned: true}
   end
+
+  # Collecting nothing is a successful poll, not an error: there is no
+  # fault to retry and nothing to report but the absence of a key, which
+  # was already logged once.
+  defp do_fetch(_module, :unconfigured, _context, platform_state),
+    do: {:ok, [], platform_state}
 
   defp do_fetch(module, :mock, context, platform_state),
     do: module.mock_fetch(context, platform_state)

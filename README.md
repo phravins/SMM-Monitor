@@ -12,12 +12,12 @@ mentions](docs/images/dashboard.png)
 
 *The dashboard, a minute after you install it.*
 
-The `MOCK DATA` in that header is not decoration: every mention in that
-table was invented by the app. Until you connect an account, all of them
-are — see [Is any of this real? Not yet](#is-any-of-this-real-not-yet)
-for what that means, and
-[Connecting your accounts](#connecting-your-accounts) for how to change
-it.
+That screenshot was taken in demo mode (`SMM_DEMO=1`), which is why the
+header says `MOCK DATA` — the wording a newer build spells `DEMO DATA`.
+A fresh install no longer does this: it collects nothing until you
+connect an account, and says so. See
+[Is any of this real?](#is-any-of-this-real) and
+[Connecting your accounts](#connecting-your-accounts).
 
 ## Quick start
 
@@ -153,13 +153,26 @@ Three things count as "already set up", so the wizard never appears on a
 server or in a script: credentials in the environment, systemd's
 `STATE_DIRECTORY`, or `SMM_SETUP_COMPLETE=1`.
 
-## Is any of this real? Not yet
+## Is any of this real?
 
-Start the app and the dashboard immediately fills with mentions, scores
-and charts. **None of it is real.** Nothing has been fetched from
-Reddit, YouTube, X or Instagram, and no account of yours is involved.
-Those posts were invented locally so the dashboard has something to show
-before you've set anything up.
+**Yes — or the dashboard stays empty and says so.** SMM Monitor does not
+invent mentions any more. Until you connect an account it collects
+nothing, the table explains why, and the top line reads
+`NOT CONNECTED`.
+
+It used to fill itself with invented posts instead. That was a bad
+trade: fabricated mentions are indistinguishable from collected ones
+once they are in the table, they went into the same database, and they
+skewed the trends, the alerts and every report exported afterwards.
+
+If you *want* invented data — for a demo, a screenshot, or a look
+around — ask for it:
+
+```sh
+SMM_DEMO=1 smm-monitor
+```
+
+and the top line reads `DEMO DATA` for as long as it is on.
 
 The app says so in its own header. The top line of every screen ends
 with one of two words:
@@ -171,7 +184,8 @@ SMM MONITOR · OSWORKS 1/2 [[/]] · osworks, os works · MOCK DATA · updated 12
 
 | In the header | What it means |
 | --- | --- |
-| `MOCK DATA` (amber) | Invented posts. Nothing is being collected. |
+| `DEMO DATA` (amber) | Invented posts, because they were asked for. |
+| `NOT CONNECTED` | No account connected; nothing is being collected. |
 | `LIVE` (green) | Real posts, from at least one connected platform. |
 
 That one word is the only thing you need to check. Everything downstream
@@ -248,7 +262,7 @@ and the tab letters — so a brand term like "quality" goes in fine.
 5. In SMM Monitor press `c`, then `S`. Paste each one when asked.
 
 Reddit goes live on the next poll — about thirty seconds — and the
-header changes from `MOCK DATA` to `LIVE`. There is nothing to restart.
+header changes to `LIVE`. There is nothing to restart.
 
 More detail, including exactly what gets asked of Reddit:
 [Getting Reddit API credentials](#getting-reddit-api-credentials).
@@ -1545,9 +1559,9 @@ There are two switches. The per-platform one wins:
 | `SMM_MOCK_TWITTER=false` | Twitter/X live, everything else mocked. |
 | Several of the above | Exactly those platforms live, the rest mocked. |
 | `SMM_MOCK_REDDIT=true` | Reddit mocked, even with credentials set. |
-| `SMM_MOCK_MODE=false` | Global default flips to live. Any platform whose credentials are missing still serves fixtures. |
+| `SMM_DEMO=1` | Invented data everywhere, deliberately. Without it a platform with no credentials collects nothing. |
 
-A per-platform flag unset means *"inherit `SMM_MOCK_MODE`"*, not *"go
+A per-platform flag unset means *"inherit the global demo switch"*, not *"go
 live"* — so you can't accidentally start hitting an API by never setting
 it. The one exception is the setup wizard: Reddit and YouTube keys
 entered there switch that platform to live as they are saved, so you
@@ -1895,7 +1909,7 @@ source failed counts as an error.
 
 | Variable | Used by |
 | --- | --- |
-| `SMM_MOCK_MODE` | Global switch; `true` (default) forces fixtures everywhere |
+| `SMM_DEMO` | Ask for invented data; off by default. `SMM_MOCK_MODE` is still read as an older spelling |
 | `SMM_MOCK_REDDIT` | Per-platform override for Reddit. Unset inherits the global. |
 | `SMM_MOCK_YOUTUBE` | Per-platform override for YouTube. Unset inherits the global. |
 | `SMM_MOCK_TWITTER` | Per-platform override for Twitter/X. Unset inherits the global. |
@@ -1948,12 +1962,12 @@ one can see**, which matters more than whether the code is written:
 | **Twitter/X** | **Platform-wide search**, last 7 days, retweets excluded. | v2 `/2/tweets/search/recent` with an app-only bearer token. Two limits tracked separately: the 15-minute window from headers, the monthly post cap locally. **Paid tier required.** |
 | **Instagram** | **Not brand-wide.** Only posts that tag your account, comments on your own posts, and (opt-in) public posts carrying a tracked hashtag. | Graph API, scoped to one Business account. The Graph API has no keyword search at any tier — see [What Instagram monitoring can and cannot see](#what-instagram-monitoring-can-and-cannot-see). |
 
-Every platform independently falls back to fixtures when its credentials
-are missing, and says so in the log. So a half-configured install shows
-real Reddit data next to fixture Instagram data rather than an empty
-dashboard or a crash — and `SMM_MOCK_MODE=true` (the default) serves
-fixtures everywhere, which is what makes the app runnable with no
-credentials at all.
+Every platform independently collects nothing when its credentials are
+missing, and says so in the log. So a half-configured install shows real
+Reddit data next to an empty Instagram tab rather than a crash — and
+never next to invented Instagram data, which would look exactly like the
+real thing. `SMM_DEMO=1` serves fixtures everywhere when that is what
+you actually want.
 
 **Coverage is uneven, on purpose.** Reddit, YouTube and X answer "who
 mentioned us anywhere?"; Instagram answers "who tagged us, and what did
