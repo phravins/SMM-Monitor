@@ -143,7 +143,21 @@ defmodule SmmMonitor.SSH.Server do
       # Public key only. Password auth is never offered.
       {:auth_methods, ~c"publickey"},
       {:key_cb, {KeyAuth, [authorized_keys: authorized_keys]}},
-      {:idle_time, :timer.hours(8)}
+      {:idle_time, :timer.hours(8)},
+      # Limits on what an unauthenticated stranger can consume. Without
+      # these, anyone who can reach the port can hold open as many
+      # half-finished handshakes as they like: every one is a process and
+      # a file descriptor on the machine that is also running the
+      # collection. None of this weakens access - the key check is
+      # unchanged - it just stops the door being used as a lever.
+      {:max_sessions, 16},
+      {:max_channels, 4},
+      # A handshake that has not finished in half a minute is not a
+      # person opening a dashboard.
+      {:negotiation_timeout, :timer.seconds(30)},
+      # Authenticate one connection at a time, so a flood of logins
+      # cannot crowd out the operator's own.
+      {:parallel_login, false}
     ])
   end
 end

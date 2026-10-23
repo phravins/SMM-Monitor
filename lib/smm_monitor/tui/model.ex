@@ -333,6 +333,68 @@ defmodule SmmMonitor.TUI.Model do
     clamp_offset(%{model | rows: rows_for(context)})
   end
 
+  @doc """
+  Whether any platform is actually collecting.
+
+  Distinct from "not in demo mode": an install with no credentials at
+  all is neither demo nor live, and calling it live was a small lie the
+  header used to tell.
+  """
+  @spec connected?(t()) :: boolean()
+  def connected?(%__MODULE__{statuses: statuses}) do
+    Enum.any?(statuses, &(&1.mode == :live))
+  end
+
+  @doc """
+  One line saying why the mentions table is empty.
+  """
+  @spec empty_headline(t()) :: String.t()
+  def empty_headline(%__MODULE__{} = model) do
+    cond do
+      model.mock_mode -> "No demo mentions yet — give it a moment."
+      connected?(model) -> "Nothing yet about this client."
+      true -> "No account is connected, so nothing is being collected."
+    end
+  end
+
+  @doc """
+  What to do about an empty table, in the order worth doing it.
+  """
+  @spec empty_advice(t()) :: [String.t()]
+  def empty_advice(%__MODULE__{} = model) do
+    cond do
+      model.mock_mode ->
+        [
+          "The demo fetchers invent a few mentions on each poll.",
+          "Nothing here was collected from a real platform."
+        ]
+
+      connected?(model) ->
+        [
+          "Collection is running. Nobody has posted anything matching",
+          "this client's brand terms in the window shown — which is an",
+          "answer, not a fault.",
+          "",
+          "Check the terms are the ones people actually write: press c."
+        ]
+
+      true ->
+        [
+          "SMM Monitor no longer invents mentions to fill the screen, so",
+          "this stays empty until an account is connected.",
+          "",
+          "  press c  then  S   to add Reddit or YouTube keys (both free)",
+          "",
+          "Reddit takes about three minutes and is the one that searches",
+          "all of Reddit for your brand terms. X and Instagram are set up",
+          "with environment variables — see the README.",
+          "",
+          "Just looking around? Start it with SMM_DEMO=1 for invented",
+          "data, clearly labelled DEMO DATA in the top line."
+        ]
+    end
+  end
+
   @doc "The slice of mentions currently on screen."
   @spec visible_mentions(t()) :: [SmmMonitor.Mention.t()]
   def visible_mentions(%__MODULE__{} = model) do
@@ -521,6 +583,12 @@ defmodule SmmMonitor.TUI.Model do
     credentials = Setup.credentials(setup)
     saved = Settings.save(%{credentials: credentials, completed_at: DateTime.utc_now()})
     Settings.merge(credentials)
+
+    # "Skip and look around with demo data" has to say so out loud now.
+    # It used to work by doing nothing, because invented data was the
+    # default; the default is now to collect nothing, so a person who
+    # asked to look around would have been handed an empty dashboard.
+    if Setup.demo?(setup), do: SmmMonitor.enable_demo_data()
 
     model =
       case Setup.brand(setup) do

@@ -1,12 +1,19 @@
 defmodule SmmMonitor.Fetchers.MockFallbackTest do
   @moduledoc """
   The rule this file protects: a platform configured for live data but
-  missing its credentials degrades to fixtures with a clear log message —
-  it does not crash, and it does not leave that tab empty.
+  missing its credentials collects **nothing**, says so once, and keeps
+  the worker alive.
 
-  Nothing here touches the network. In the fallback path the worker calls
-  `mock_fetch/2`, which never makes an HTTP request; the live path is
-  covered with a fake fetcher that returns canned data.
+  It used to invent mentions instead, on the reasoning that an empty tab
+  was worse than a full one. That was wrong. Invented posts are
+  indistinguishable from collected ones once they are in the table, they
+  are written to the same database, and they then skew the trends, the
+  alerts and every report exported afterwards. Nothing about a missing
+  key justifies making the numbers up.
+
+  Nothing here touches the network: an unconfigured platform makes no
+  request at all, and the live path is covered with a fake fetcher that
+  returns canned data.
   """
 
   use ExUnit.Case, async: false
@@ -80,7 +87,7 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
       :ok
     end
 
-    test "falls back to mock data instead of crashing" do
+    test "collects nothing, rather than inventing it" do
       log =
         capture_log(fn ->
           start_worker(:youtube, YouTube)
@@ -88,22 +95,22 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
         end)
 
       status = Worker.status(:youtube)
-      assert status.mode == :mock
-      assert status.inserted > 0
+      assert status.mode == :unconfigured
+      assert status.inserted == 0
       assert is_nil(status.last_error)
-      assert Monitor.stats(:youtube).count > 0
+      assert Monitor.stats(:youtube).count == 0
       assert log =~ "youtube"
-      assert log =~ "credentials are missing"
+      assert log =~ "no credentials"
     end
 
-    test "spends no API quota while falling back" do
+    test "spends no API quota" do
       # The whole point: no key means no calls, so nothing to spend.
       capture_log(fn ->
         start_worker(:youtube, YouTube)
         assert eventually(fn -> polled?(:youtube) end)
       end)
 
-      assert Worker.status(:youtube).mode == :mock
+      assert Worker.status(:youtube).mode == :unconfigured
     end
 
     test "a blank key is treated as missing" do
@@ -114,7 +121,7 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
         assert eventually(fn -> polled?(:youtube) end)
       end)
 
-      assert Worker.status(:youtube).mode == :mock
+      assert Worker.status(:youtube).mode == :unconfigured
     end
   end
 
@@ -133,7 +140,7 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
       :ok
     end
 
-    test "falls back to mock data instead of crashing" do
+    test "collects nothing, rather than inventing it" do
       log =
         capture_log(fn ->
           start_worker(:twitter, Twitter)
@@ -141,22 +148,22 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
         end)
 
       status = Worker.status(:twitter)
-      assert status.mode == :mock
-      assert status.inserted > 0
+      assert status.mode == :unconfigured
+      assert status.inserted == 0
       assert is_nil(status.last_error)
-      assert Monitor.stats(:twitter).count > 0
+      assert Monitor.stats(:twitter).count == 0
       assert log =~ "twitter"
-      assert log =~ "credentials are missing"
+      assert log =~ "no credentials"
     end
 
-    test "spends nothing from the monthly post cap while falling back" do
+    test "spends nothing from the monthly post cap" do
       # No token means no request, so there is no cap to spend.
       capture_log(fn ->
         start_worker(:twitter, Twitter)
         assert eventually(fn -> polled?(:twitter) end)
       end)
 
-      assert Worker.status(:twitter).mode == :mock
+      assert Worker.status(:twitter).mode == :unconfigured
     end
 
     test "a blank token is treated as missing" do
@@ -167,7 +174,7 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
         assert eventually(fn -> polled?(:twitter) end)
       end)
 
-      assert Worker.status(:twitter).mode == :mock
+      assert Worker.status(:twitter).mode == :unconfigured
     end
   end
 
@@ -177,7 +184,7 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
       :ok
     end
 
-    test "falls back to mock data instead of crashing" do
+    test "collects nothing, rather than inventing it" do
       Application.put_env(:smm_monitor, :credentials, instagram: [])
 
       log =
@@ -187,12 +194,12 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
         end)
 
       status = Worker.status(:instagram)
-      assert status.mode == :mock
-      assert status.inserted > 0
+      assert status.mode == :unconfigured
+      assert status.inserted == 0
       assert is_nil(status.last_error)
-      assert Monitor.stats(:instagram).count > 0
+      assert Monitor.stats(:instagram).count == 0
       assert log =~ "instagram"
-      assert log =~ "credentials are missing"
+      assert log =~ "no credentials"
     end
 
     test "a token without a business account id is treated as missing" do
@@ -205,7 +212,7 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
         assert eventually(fn -> polled?(:instagram) end)
       end)
 
-      assert Worker.status(:instagram).mode == :mock
+      assert Worker.status(:instagram).mode == :unconfigured
     end
 
     test "a business account id without a token is treated as missing" do
@@ -216,7 +223,7 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
         assert eventually(fn -> polled?(:instagram) end)
       end)
 
-      assert Worker.status(:instagram).mode == :mock
+      assert Worker.status(:instagram).mode == :unconfigured
     end
   end
 
@@ -249,7 +256,7 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
       :ok
     end
 
-    test "falls back to mock data instead of crashing" do
+    test "collects nothing, rather than inventing it" do
       # The capture has to span the wait: the first poll fires after a
       # startup jitter, so it lands well after start_supervised! returns.
       log =
@@ -259,15 +266,16 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
         end)
 
       status = Worker.status(:reddit)
-      assert status.mode == :mock
-      # Falling back is not a failure: nothing errored, mentions still flowed.
-      assert status.inserted > 0
+      assert status.mode == :unconfigured
+      # Collecting nothing is not a failure: no error, no retry storm,
+      # and above all nothing invented to fill the gap.
+      assert status.inserted == 0
       assert is_nil(status.last_error)
-      assert Monitor.stats(:reddit).count > 0
-      assert log =~ "credentials are missing"
+      assert Monitor.stats(:reddit).count == 0
+      assert log =~ "no credentials"
     end
 
-    test "says which platform and points at the README" do
+    test "says which platform, and how to fix it" do
       log =
         capture_log(fn ->
           start_reddit_worker()
@@ -275,13 +283,15 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
         end)
 
       assert log =~ "reddit"
-      assert log =~ "falling back to mock data"
-      assert log =~ "README"
+      assert log =~ "nothing is being collected"
+      # The message has to name the fix, not just the fault.
+      assert log =~ "c` then `S"
+      assert log =~ "Nothing will be invented"
     end
 
     test "a half-configured credential pair is treated as missing" do
-      # A client id with no secret can't authenticate; better to fall back
-      # than to fail every poll with a 401.
+      # A client id with no secret cannot authenticate. Better to collect
+      # nothing and say so than to fail every poll with a 401.
       Application.put_env(:smm_monitor, :credentials, reddit: [client_id: "id"])
 
       capture_log(fn ->
@@ -289,7 +299,7 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
         assert eventually(fn -> polled?(:reddit) end)
       end)
 
-      assert Worker.status(:reddit).mode == :mock
+      assert Worker.status(:reddit).mode == :unconfigured
     end
 
     test "the worker stays alive and keeps polling" do
@@ -319,7 +329,7 @@ defmodule SmmMonitor.Fetchers.MockFallbackTest do
 
       assert Worker.status(:reddit).mode == :mock
       # No warning: this is a deliberate choice, not a misconfiguration.
-      refute log =~ "credentials are missing"
+      refute log =~ "no credentials"
     end
   end
 

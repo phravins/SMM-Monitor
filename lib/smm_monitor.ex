@@ -22,6 +22,21 @@ defmodule SmmMonitor do
   def config(key, default \\ nil), do: Application.get_env(:smm_monitor, key, default)
 
   @doc """
+  Turns invented data on for this run, for somebody who asked to look
+  around without connecting an account.
+
+  Demo data is off by default, so this is the only thing that switches
+  it on from inside the app. It is deliberately loud in the interface:
+  the header says DEMO DATA for as long as it is on.
+  """
+  @spec enable_demo_data() :: :ok
+  def enable_demo_data do
+    Application.put_env(:smm_monitor, :mock_mode, true)
+    Application.put_env(:smm_monitor, :mock_platforms, [])
+    :ok
+  end
+
+  @doc """
   Whether `platform` should serve fixture data instead of calling its API.
 
   `:mock_mode` is the global default; `:mock_platforms` overrides it per

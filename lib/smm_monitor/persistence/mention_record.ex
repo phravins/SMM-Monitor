@@ -13,7 +13,7 @@ defmodule SmmMonitor.Persistence.MentionRecord do
 
   use Ecto.Schema
 
-  alias SmmMonitor.Mention
+  alias SmmMonitor.{Mention, Text}
 
   @type t :: %__MODULE__{}
 
@@ -84,9 +84,14 @@ defmodule SmmMonitor.Persistence.MentionRecord do
       # migration, but a row read from a partially-migrated database
       # still needs somewhere to belong.
       client_id: record.client_id || Mention.default_client_id(),
-      author: record.author,
-      text: record.text,
-      url: record.url,
+      # Cleaned again on the way out, not only on the way in. Rows
+      # written before the sanitiser existed still hold raw escape
+      # sequences, and so would rows written by anything that bypasses
+      # Mention.new/1 - a restored backup, a hand-edited database. The
+      # terminal cannot tell the difference, so neither does this.
+      author: Text.safe(record.author),
+      text: Text.safe(record.text),
+      url: Text.safe(record.url),
       timestamp: record.source_timestamp,
       sentiment: sentiment_atom(record.sentiment),
       sentiment_value: sentiment_value(record),

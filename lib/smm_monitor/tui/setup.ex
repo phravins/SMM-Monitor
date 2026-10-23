@@ -31,6 +31,11 @@ defmodule SmmMonitor.TUI.Setup do
 
   @steps [:brand, :reddit_id, :reddit_secret, :youtube_key, :review]
 
+  # The steps whose answer is a credential rather than something to read
+  # back. The Reddit client id is deliberately not one of them: Reddit
+  # prints it on the app's own page, and people need to check the paste.
+  @secret_steps [:reddit_secret, :youtube_key]
+
   @fields %{
     brand: :brand,
     reddit_id: :reddit_id,
@@ -67,6 +72,43 @@ defmodule SmmMonitor.TUI.Setup do
       field -> Map.get(answers, field, "")
     end
   end
+
+  @doc """
+  The answer as it should appear on screen.
+
+  A secret typed into a dashboard is a secret on a screen: visible to
+  whoever is behind you, to a screen share, and to a recording. The
+  brand is meant to be read back and checked, so it is shown; the
+  credentials are not, so they are not. The last four characters stay
+  visible because somebody who has just pasted a key wants to know the
+  paste landed.
+
+      iex> alias SmmMonitor.TUI.Setup
+      iex> setup = Setup.new() |> Setup.handle_key({:char, ?a})
+      iex> Setup.display_value(setup)
+      "a"
+  """
+  @spec display_value(t()) :: String.t()
+  def display_value(%__MODULE__{step: step} = setup) do
+    value = value(setup)
+
+    if step in @secret_steps, do: mask(value), else: value
+  end
+
+  defp mask(value) do
+    case String.length(value) do
+      0 -> ""
+      length when length <= 4 -> String.duplicate("•", length)
+      length -> String.duplicate("•", length - 4) <> String.slice(value, -4, 4)
+    end
+  end
+
+  @doc """
+  Whether they chose to look around with invented data instead of
+  naming a brand.
+  """
+  @spec demo?(t()) :: boolean()
+  def demo?(%__MODULE__{demo: demo}), do: demo
 
   @doc "The brand to watch, or `nil` when they skipped it."
   @spec brand(t()) :: String.t() | nil

@@ -81,10 +81,16 @@ defmodule SmmMonitor.Setup.Settings do
 
     temporary = "#{file}.tmp-#{System.unique_integer([:positive])}"
 
+    # The order matters. Writing first and tightening the mode afterwards
+    # publishes the keys to every account on the machine for as long as
+    # the chmod takes - short, but a local attacker only has to poll a
+    # directory. Create the file empty, restrict it, then put the secrets
+    # in a file nobody else can open.
     with {:ok, json} <- Jason.encode(document, pretty: true),
          :ok <- File.mkdir_p(Path.dirname(file)),
-         :ok <- File.write(temporary, json <> "\n"),
+         :ok <- File.touch(temporary),
          :ok <- File.chmod(temporary, 0o600),
+         :ok <- File.write(temporary, json <> "\n"),
          :ok <- File.rename(temporary, file) do
       :ok
     else

@@ -363,7 +363,10 @@ defmodule SmmMonitor.ReportsTest do
     end
 
     test "builds and writes in one call", %{client: client, dir: dir, opts: opts} do
-      store(client, days_ago: 1)
+      # `days: 7` is counted from the real today, not from @today, so
+      # this one has to be stored against the real clock to land inside
+      # the window.
+      store(client, at: DateTime.add(DateTime.utc_now(), -1, :day))
 
       assert {:ok, paths} = Reports.generate(client, opts ++ [days: 7, formats: [:csv], dir: dir])
 
@@ -431,12 +434,27 @@ defmodule SmmMonitor.ReportsTest do
   defp store(client, overrides) do
     {at, overrides} = Keyword.pop(overrides, :at)
     {on, overrides} = Keyword.pop(overrides, :on)
+    {days_ago, overrides} = Keyword.pop(overrides, :days_ago)
 
     overrides =
-      case {at, on} do
-        {nil, nil} -> overrides
-        {%DateTime{} = at, _} -> Keyword.put(overrides, :timestamp, at)
-        {_, %Date{} = on} -> Keyword.put(overrides, :timestamp, noon(on))
+      case {at, on, days_ago} do
+        {nil, nil, nil} ->
+          overrides
+
+        {%DateTime{} = at, _, _} ->
+          Keyword.put(overrides, :timestamp, at)
+
+        {_, %Date{} = on, _} ->
+          Keyword.put(overrides, :timestamp, noon(on))
+
+        # `days_ago:` used to fall through to Mention.new/1, which does
+        # not know the key and ignored it, so the mention was stamped
+        # "now". That was invisible while "now" still fell inside the
+        # period these tests pin to @today, and every one of them started
+        # failing the day the calendar moved past it. Counted from
+        # @today, not from today, so they keep passing next year.
+        {_, _, days} when is_integer(days) ->
+          Keyword.put(overrides, :timestamp, noon(Date.add(@today, -days)))
       end
 
     {:ok, 1} =

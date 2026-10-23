@@ -150,7 +150,16 @@ defmodule SmmMonitor.TUI.Renderers.Common do
       # clients on one dashboard, "whose numbers am I looking at?" is the
       # question the header has to answer before any other.
       defp top_bar(model) do
-        mode = if model.mock_mode, do: "MOCK DATA", else: "LIVE"
+        # Three states, not two. "LIVE" used to mean only "not demo", so
+        # an install with no keys at all claimed to be live while
+        # collecting nothing.
+        mode =
+          cond do
+            model.mock_mode -> "DEMO DATA"
+            Model.connected?(model) -> "LIVE"
+            true -> "NOT CONNECTED"
+          end
+
         {position, total} = Model.client_position(model)
 
         bar do
@@ -418,7 +427,8 @@ defmodule SmmMonitor.TUI.Renderers.Common do
           end,
           label do
             text(content: "  > ", color: @accent, attributes: @bold)
-            text(content: Setup.value(setup), attributes: @bold)
+            # display_value, not value: the credential steps are masked.
+            text(content: Setup.display_value(setup), attributes: @bold)
             # A block for a cursor: termbox gives us no real one inside a
             # panel, and an empty field should still look like a field.
             text(content: "█", color: @accent)
@@ -847,6 +857,13 @@ defmodule SmmMonitor.TUI.Renderers.Common do
       end
 
       defp mentions_table(model) do
+        case Model.visible_mentions(model) do
+          [] -> empty_table(model)
+          mentions -> filled_table(model, mentions)
+        end
+      end
+
+      defp filled_table(model, mentions) do
         panel(title: mentions_title(model), height: :fill, padding: 0) do
           table do
             table_row(attributes: @bold) do
@@ -857,8 +874,27 @@ defmodule SmmMonitor.TUI.Renderers.Common do
               table_cell(content: "AGE")
             end
 
-            Enum.map(Model.visible_mentions(model), &mention_row(&1, model.updated_at))
+            Enum.map(mentions, &mention_row(&1, model.updated_at))
           end
+        end
+      end
+
+      # An empty table is the normal first thing a new install shows now
+      # that nothing is invented. A blank panel would read as a broken
+      # app, so it says which of the three reasons it is, and the one
+      # thing to press next.
+      defp empty_table(model) do
+        panel(title: mentions_title(model), height: :fill, padding: 1) do
+          [
+            label(content: ""),
+            label do
+              text(content: "  " <> Model.empty_headline(model), color: @accent, attributes: @bold)
+            end,
+            label(content: ""),
+            Enum.map(Model.empty_advice(model), fn line ->
+              label(content: "  " <> line)
+            end)
+          ]
         end
       end
 
