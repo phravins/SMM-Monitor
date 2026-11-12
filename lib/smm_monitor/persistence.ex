@@ -91,6 +91,7 @@ defmodule SmmMonitor.Persistence do
     |> limit(^limit)
     |> repo.all()
     |> Enum.map(&MentionRecord.to_mention/1)
+    |> Enum.reject(&is_nil/1)
   rescue
     error ->
       Logger.warning("database: could not read #{platform} history (#{inspect(error)})")
@@ -250,6 +251,7 @@ defmodule SmmMonitor.Persistence do
     |> order_by([m], desc: m.source_timestamp)
     |> repo.all()
     |> Enum.map(&MentionRecord.to_mention/1)
+    |> Enum.reject(&is_nil/1)
   rescue
     error ->
       Logger.warning("database: could not read the report period (#{inspect(error)})")

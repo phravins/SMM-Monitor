@@ -282,4 +282,103 @@ defmodule SmmMonitor.TUI.ModelTest do
       assert resized.offset <= length(resized.mentions) - resized.rows
     end
   end
+
+  describe "moving between tabs" do
+    # The trends screen reads the database.
+    setup do
+      owner = Ecto.Adapters.SQL.Sandbox.start_owner!(SmmMonitor.Repo, shared: true)
+      on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(owner) end)
+    end
+
+    test "the right arrow walks the tabs in order" do
+      model = Model.refresh(Model.new())
+
+      # Up to the config screen, where the arrows move between fields.
+      {visited, _model} =
+        Enum.map_reduce(tl(model.tabs), model, fn _tab, model ->
+          next = Model.handle_key(model, {:key, :arrow_right})
+          {next.tab, next}
+        end)
+
+      assert visited == tl(model.tabs)
+    end
+
+    test "the left arrow goes backwards from the first tab to the last" do
+      model = Model.refresh(Model.new())
+      assert Model.handle_key(model, {:key, :arrow_left}).tab == List.last(model.tabs)
+    end
+
+    test "on the config screen the arrows still move between fields" do
+      model = Model.handle_key(Model.new(), {:char, ?c})
+      assert model.tab == :config
+      assert Model.handle_key(model, {:key, :arrow_right}).tab == :config
+    end
+  end
+
+  describe "a platform that is off until switched on" do
+    @describetag :tmp_dir
+
+    setup %{tmp_dir: dir} do
+      bluesky = Application.get_env(:smm_monitor, SmmMonitor.Fetchers.Bluesky)
+      mocks = Application.get_env(:smm_monitor, :mock_platforms)
+
+      Application.put_env(:smm_monitor, SmmMonitor.Fetchers.Bluesky,
+        enabled: false,
+        cursor_file: Path.join(dir, "bluesky.cursor")
+      )
+
+      Application.put_env(:smm_monitor, :mock_platforms, bluesky: false)
+
+      # Demo mode stores mentions from the worker's own process.
+      owner = Ecto.Adapters.SQL.Sandbox.start_owner!(SmmMonitor.Repo, shared: true)
+
+      on_exit(fn ->
+        Ecto.Adapters.SQL.Sandbox.stop_owner(owner)
+        restore_env(SmmMonitor.Fetchers.Bluesky, bluesky)
+        restore_env(:mock_platforms, mocks)
+      end)
+
+      start_supervised!({SmmMonitor.Fetchers.StreamWorker, module: SmmMonitor.Fetchers.Bluesky})
+      SmmMonitor.Fetchers.StreamWorker.poll_now(:bluesky)
+      :ok
+    end
+
+    test "has no tab, and its key does nothing, while it is off" do
+      model = Model.refresh(Model.new())
+
+      refute :bluesky in model.tabs
+      # The original platforms keep theirs, connected or not.
+      assert Enum.all?([:twitter, :instagram, :reddit, :youtube], &(&1 in model.tabs))
+      assert Model.handle_key(model, {:char, ?b}).tab == :all
+    end
+
+    test "gets a tab, selected with b, once it is showing data" do
+      Application.put_env(:smm_monitor, :mock_platforms, bluesky: true)
+      SmmMonitor.Fetchers.StreamWorker.poll_now(:bluesky)
+
+      model = Model.refresh(Model.new())
+      assert :bluesky in model.tabs
+      assert Model.handle_key(model, {:char, ?b}).tab == :bluesky
+    end
+
+    test "keeps its tab while it is being looked at" do
+      Application.put_env(:smm_monitor, :mock_platforms, bluesky: true)
+      SmmMonitor.Fetchers.StreamWorker.poll_now(:bluesky)
+      model = Model.handle_key(Model.refresh(Model.new()), {:char, ?b})
+
+      Application.put_env(:smm_monitor, :mock_platforms, bluesky: false)
+      SmmMonitor.Fetchers.StreamWorker.poll_now(:bluesky)
+
+      model = Model.refresh(model)
+      assert model.tab == :bluesky
+      assert :bluesky in model.tabs
+
+      # Once the user moves away, it goes.
+      model = Model.handle_key(model, {:char, ?a})
+      refute :bluesky in model.tabs
+    end
+  end
+
+  defp restore_env(key, nil), do: Application.delete_env(:smm_monitor, key)
+  defp restore_env(key, value), do: Application.put_env(:smm_monitor, key, value)
 end

@@ -89,13 +89,16 @@ defmodule SmmMonitor.TUI.Model do
 
   @type t :: %__MODULE__{}
 
-  # Tab shortcuts: a for all, t/i/r/y for the platforms, c for config.
+  # Tab shortcuts: a for all, t/i/r/y/b for the platforms, c for config.
+  # Digits are taken (they pick a client), so platforms past these get
+  # letters too, and the left and right arrows step through every tab.
   @tab_keys %{
     ?a => :all,
     ?t => :twitter,
     ?i => :instagram,
     ?r => :reddit,
     ?y => :youtube,
+    ?b => :bluesky,
     ?h => :trends,
     ?c => :config
   }
@@ -160,12 +163,15 @@ defmodule SmmMonitor.TUI.Model do
     model = %{model | clients: clients, client_id: resolve_selection(model, clients)}
     scope = model.client_id || :all
 
+    statuses = statuses()
+
     %{
       model
-      | mentions: Monitor.recent(reading_tab, 200, scope),
+      | tabs: visible_tabs(statuses, model.tab),
+        mentions: Monitor.recent(reading_tab, 200, scope),
         stats: Monitor.stats(reading_tab, nil, scope),
         breakdown: Monitor.breakdown(nil, scope),
-        statuses: statuses(),
+        statuses: statuses,
         # Read every tick, not once at start: choosing demo data in the
         # wizard has to change the header straight away.
         mock_mode: SmmMonitor.config(:mock_mode, false),
@@ -301,6 +307,12 @@ defmodule SmmMonitor.TUI.Model do
   def handle_key(model, {:key, :page_down}), do: scroll(model, model.rows)
   def handle_key(model, {:key, :page_up}), do: scroll(model, -model.rows)
   def handle_key(model, {:key, :home}), do: %{model | offset: 0}
+
+  # Off the config screen (where they move between fields) the left and
+  # right arrows step through the tabs, so every platform is reachable
+  # however many there are.
+  def handle_key(model, {:key, :arrow_right}), do: cycle_tab(model, 1)
+  def handle_key(model, {:key, :arrow_left}), do: cycle_tab(model, -1)
   def handle_key(model, _key), do: model
 
   @doc "Switches the active tab and re-reads for it, resetting the scroll."
@@ -322,6 +334,12 @@ defmodule SmmMonitor.TUI.Model do
       # no-op rather than an empty screen.
       model
     end
+  end
+
+  defp cycle_tab(model, step) do
+    count = length(model.tabs)
+    index = Enum.find_index(model.tabs, &(&1 == model.tab)) || 0
+    select_tab(model, Enum.at(model.tabs, Integer.mod(index + step, count)))
   end
 
   @doc "Moves the table's viewport by `delta` rows, staying in bounds."
@@ -527,7 +545,8 @@ defmodule SmmMonitor.TUI.Model do
   80-column terminal, and a tab bar that trails off mid-word looks like
   a bug. The counts are the part that can go: they are repeated in the
   summary panel a line below, where the platform tabs' numbers are the
-  ones being read anyway.
+  ones being read anyway. If the bare names still do not fit, the long
+  ones are abbreviated (`insta`, `yt`, `bsky`).
   """
   @spec tab_labels(t()) :: [{atom(), String.t()}]
   def tab_labels(%__MODULE__{} = model) do
@@ -535,12 +554,22 @@ defmodule SmmMonitor.TUI.Model do
 
     # Four characters of padding and brackets around each label, and the
     # panel's own two borders.
-    if drawn_width(full) + 2 <= model.columns do
-      full
-    else
-      Enum.map(model.tabs, &{&1, short_tab_label(&1)})
+    short = Enum.map(model.tabs, &{&1, short_tab_label(&1)})
+
+    cond do
+      drawn_width(full) + 2 <= model.columns -> full
+      # With more platforms even the bare names overflow, so the long
+      # ones fall back to the abbreviations people already use for them.
+      drawn_width(short) + 2 <= model.columns -> short
+      true -> Enum.map(model.tabs, &{&1, tiny_tab_label(&1)})
     end
   end
+
+  defp tiny_tab_label(:twitter), do: "x"
+  defp tiny_tab_label(:instagram), do: "insta"
+  defp tiny_tab_label(:youtube), do: "yt"
+  defp tiny_tab_label(:bluesky), do: "bsky"
+  defp tiny_tab_label(tab), do: short_tab_label(tab)
 
   defp drawn_width(labels) do
     Enum.reduce(labels, 0, fn {_tab, label}, total -> total + String.length(label) + 4 end)
@@ -593,7 +622,7 @@ defmodule SmmMonitor.TUI.Model do
     # poll - which for YouTube can be most of twenty minutes away.
     before
     |> Settings.changed_platforms(SmmMonitor.config(:credentials, []))
-    |> Enum.each(&SmmMonitor.Fetchers.Worker.poll_now/1)
+    |> Enum.each(&SmmMonitor.Fetchers.poll_now/1)
 
     # "Skip and look around with demo data" has to say so out loud now.
     # It used to work by doing nothing, because invented data was the
@@ -1361,10 +1390,32 @@ defmodule SmmMonitor.TUI.Model do
   # that rather than crashing along with it.
   defp statuses do
     Enum.map(SmmMonitor.platforms(), fn platform ->
-      case SmmMonitor.Fetchers.Worker.status(platform) do
+      case SmmMonitor.Fetchers.status(platform) do
         :unavailable -> %{platform: platform, mode: :down, last_error: :not_running}
         status -> status
       end
     end)
+  end
+
+  # Which tabs to draw. The original four platforms always have a tab,
+  # so one without keys can say it is not connected. Platforms that are
+  # off until somebody switches them on (`tab: :when_on` in config, such
+  # as Bluesky) only get a tab once they are live or showing demo data,
+  # so a dozen idle platforms do not crowd the bar. The tab being looked
+  # at is never taken away.
+  defp visible_tabs(statuses, current) do
+    shown =
+      for %{platform: platform} = status <- statuses,
+          platform == current or tab_rule(platform) == :always or status.mode != :unconfigured,
+          do: platform
+
+    [:all | shown] ++ [:trends, :config]
+  end
+
+  defp tab_rule(platform) do
+    :smm_monitor
+    |> Application.get_env(:platforms, [])
+    |> Keyword.get(platform, [])
+    |> Keyword.get(:tab, :always)
   end
 end

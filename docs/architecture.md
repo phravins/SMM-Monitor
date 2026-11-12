@@ -8,13 +8,16 @@ the tests. For running it as a service, see [DEPLOY.md](../DEPLOY.md).
 ## Data flow
 
 ```
- Reddit · YouTube · X · Instagram          (HTTPS APIs)
-              │
-              ▼
- Fetchers.Worker  ── one per platform, polls every client in turn,
-              │       tracks rate limits and quotas, records
-              │       last_success_at / next_poll_at
-              ▼
+ Reddit · YouTube · X · Instagram          Bluesky (Jetstream)
+        (HTTPS APIs, polled)               (WebSocket, pushed)
+              │                                    │
+              ▼                                    ▼
+ Fetchers.Worker ── one per platform,     Fetchers.StreamWorker ── one
+              │      polls every client    │   connection, matches every
+              │      in turn, tracks       │   post against all clients
+              │      rate limits/quotas    │   (Matching), batches 1s/100
+              └──────────────┬─────────────┘
+                             ▼
  Processing.Processor ── cleans text, scores sentiment, drops
               │          duplicates and posts older than the window
       ┌───────┴────────┐
@@ -44,7 +47,8 @@ SmmMonitor.Supervisor                    (one_for_one)
 │   ├── PlatformSupervisor(:reddit)    → Worker(:reddit)
 │   ├── PlatformSupervisor(:youtube)   → Worker(:youtube)
 │   ├── PlatformSupervisor(:twitter)   → Worker(:twitter)
-│   └── PlatformSupervisor(:instagram) → Worker(:instagram)
+│   ├── PlatformSupervisor(:instagram) → Worker(:instagram)
+│   └── PlatformSupervisor(:bluesky)   → StreamWorker(:bluesky)
 └── Ratatouille.Runtime.Supervisor       only when the TUI is enabled
 ```
 
@@ -63,6 +67,35 @@ in the worker's GenServer state, so a crashing platform restarts with a
 clean token and can't corrupt anyone else's. A fetcher that fails with
 `{:rate_limited, ms}` pushes its next poll out by at least that long:
 backing off is the fetcher's decision to make and the worker's to enforce.
+
+**Streaming.** A platform whose config entry says `kind: :stream` gets a
+`StreamWorker` instead of a `Worker`, under the same kind of
+per-platform supervisor. It holds one WebSocket open
+(`SmmMonitor.WebSocket`, a small RFC 6455 client written for this app
+rather than a Hex dependency) and receives posts as they happen instead
+of asking for them. Three things differ from polling:
+
+* **Matching is local.** A stream sends everything, so the worker keeps
+  a compiled `SmmMonitor.Matching` matcher for all active clients and
+  runs each post through it; a post naming two clients becomes two
+  mentions. The matcher is rebuilt when the client list changes, without
+  reconnecting.
+* **Writes are batched.** Matched posts are handed to the processor once
+  a second, or as soon as 100 are waiting, so a busy stream is not one
+  GenServer call per post. The platform module's `enrich/2` runs on each
+  batch first (Bluesky uses it to turn author ids into handles).
+* **Reconnects are the normal case.** A dropped connection, a close from
+  the server, an oversize message or a failed handshake all lead to a
+  reconnect with exponential back-off and jitter (1s doubling to 60s).
+  A platform that returns `{:stop, reason}` (a revoked token, say) is
+  left alone for 10 minutes. No clients means no connection at all.
+
+`StreamWorker.status/1` returns the same map shape as `Worker.status/1`,
+plus `transport: :stream`, `connection` (`:connected`, `:reconnecting`,
+`:idle` or `:stopped`) and counters (`events_seen`, `matched`,
+`inserted`). `SmmMonitor.Fetchers.status/1` and `poll_now/1` route to
+whichever worker a platform has, so the TUI never needs to know which
+kind it is talking to.
 
 **Clients.** One GenServer holding the clients being monitored, each with
 its own brand terms and subreddits. Application env is the right home for
@@ -265,7 +298,44 @@ supervisor needs editing. Add credentials to `config/runtime.exs` and
 `.env.example` if the platform needs them.
 
 The one place that isn't automatic: `TUI.Model`'s tab shortcuts are a fixed
-map (`a`/`t`/`i`/`r`/`y`) — pick a free letter and add it there.
+map (`a`/`t`/`i`/`r`/`y`/`b`) — pick a free letter and add it there.
+Add `tab: :when_on` to the config entry if the platform is off by
+default, so its tab only appears once it is switched on.
+
+### A streaming platform
+
+A platform that pushes posts over a WebSocket uses
+`SmmMonitor.Fetchers.Stream` instead, and `kind: :stream` in its config
+entry. The module never touches the socket; it says where to connect
+and what each message means:
+
+```elixir
+defmodule SmmMonitor.Fetchers.Example do
+  use SmmMonitor.Fetchers.Stream, platform: :example, display_name: "Example"
+
+  @impl true
+  def ready?(context), do: is_binary(context.credentials[:token])
+
+  @impl true
+  def url(_context, _state), do: {:ok, "wss://stream.example.com/v1"}
+
+  # Each decoded JSON message. Return posts as Mention.new/1 attrs; the
+  # worker matches them to clients, so don't filter by brand here.
+  @impl true
+  def handle_message(%{"type" => "post"} = msg, state),
+    do: {:ok, [to_attrs(msg)], [], state}
+
+  def handle_message(_other, state), do: {:ok, [], [], state}
+end
+```
+
+The other callbacks have defaults: `headers/1`, `on_open/1` (frames to
+send once connected), `heartbeat_ms/1` and `heartbeat/1`,
+`idle_timeout_ms/0` (reconnect after this long with no message),
+`tick/1` (periodic work, such as saving a cursor), `on_disconnect/1`
+and `enrich/2`. `handle_message/2` can also return `{:reconnect, state}`
+or `{:stop, reason, state}`. `lib/smm_monitor/fetchers/bluesky.ex` is
+the worked example, including resuming from a saved cursor.
 
 
 ## Testing
@@ -275,7 +345,8 @@ mix test
 ```
 
 The suite covers the processing and aggregation logic, mention parsing for
-all four platforms, the TUI model's state transitions, and the supervision
+every platform, the brand-term matcher, the WebSocket client and stream
+worker, the TUI model's state transitions, and the supervision
 isolation property (kill a worker, check its sibling is untouched and the
 stored mentions survive). Rendering itself isn't tested — that needs a
 terminal.
@@ -318,6 +389,13 @@ terminal.
 
   That costs 100 units. The parse tests assert on specific video ids, so
   they'll need updating to match whatever you capture.
+
+* Streaming runs against `SmmMonitor.FakeWsServer`
+  (`test/support/fake_ws_server.ex`), a WebSocket server on 127.0.0.1
+  that a test drives directly: send a message, a malformed frame or a
+  close code, or drop the TCP connection, and assert on what the worker
+  does. Bluesky's parsing uses recorded Jetstream messages, and its
+  profile lookups go through `test/support/bluesky_stub.ex`.
 
 Tests run with `start_fetchers: false` and `start_tui: false`, so they get
 the processing layer and nothing else: no 30s polls racing assertions.
@@ -492,7 +570,8 @@ Compile-time defaults live in `config/config.exs`:
 | `:persist_writes` | `true` | Whether mentions are written to disk |
 | `SmmMonitor.Fetchers.Twitter` | see above | Page size, monthly post budget, billing cycle day |
 | `SmmMonitor.Fetchers.Instagram` | see above | Which sources to poll, hashtags, page sizes |
-| `:platforms` | four entries | Platform → module, enabled flag, opts |
+| `SmmMonitor.Fetchers.Bluesky` | see below | Switch, Jetstream server, cursor file |
+| `:platforms` | five entries | Platform → module, `kind` (`:poll` or `:stream`), enabled flag, `tab: :when_on`, opts |
 
 Reddit has its own block, since these are deployment choices rather than
 app-wide ones:
@@ -513,6 +592,17 @@ config :smm_monitor, SmmMonitor.Fetchers.YouTube,
   order: "date",                 # date | relevance | rating | title | viewCount
   daily_quota_budget: 8_000,     # stop polling once this many units are spent
   published_within_ms: :timer.hours(24)
+```
+
+And Bluesky (set from the environment in `config/runtime.exs`):
+
+```elixir
+config :smm_monitor, SmmMonitor.Fetchers.Bluesky,
+  enabled: false,          # SMM_BLUESKY_ENABLED
+  jetstream_url: nil,      # SMM_BLUESKY_JETSTREAM_URL; nil = public server
+  # cursor_file: "/path",  # unset = bluesky.cursor next to the database;
+                           # nil = don't save, start from "now" each time
+  resolve_handles: true    # look up handles for author ids
 ```
 
 A platform may also set its own `:interval_ms` in the `:platforms` config;

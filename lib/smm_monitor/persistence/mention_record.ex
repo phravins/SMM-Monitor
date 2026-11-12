@@ -74,12 +74,37 @@ defmodule SmmMonitor.Persistence.MentionRecord do
   defp usec(nil), do: nil
   defp usec(%DateTime{} = timestamp), do: DateTime.add(timestamp, 0, :microsecond)
 
-  @doc "Maps a stored row back into a `Mention`, as the boot load needs."
-  @spec to_mention(t()) :: Mention.t()
+  @doc """
+  Maps a stored row back into a `Mention`, as the boot load needs.
+
+  Returns nil for a row from a platform this build does not know (one
+  removed from config, or a database written by a newer version), so
+  the caller can skip it instead of failing the whole load.
+  """
+  @spec to_mention(t()) :: Mention.t() | nil
   def to_mention(%__MODULE__{} = record) do
+    case known_platform(record.platform) do
+      nil -> nil
+      platform -> build_mention(record, platform)
+    end
+  end
+
+  # Matched against the configured platforms rather than turned into an
+  # atom, so a stored value can never create atoms (the atom table is
+  # finite and never garbage collected).
+  defp known_platform(name) when is_binary(name) do
+    :smm_monitor
+    |> Application.get_env(:platforms, [])
+    |> Keyword.keys()
+    |> Enum.find(&(Atom.to_string(&1) == name))
+  end
+
+  defp known_platform(_name), do: nil
+
+  defp build_mention(record, platform) do
     %Mention{
       id: record.mention_id,
-      platform: String.to_existing_atom(record.platform),
+      platform: platform,
       # Rows written before clients existed were backfilled by the
       # migration, but a row read from a partially-migrated database
       # still needs somewhere to belong.
