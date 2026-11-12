@@ -37,7 +37,7 @@ And what SMM Monitor reads that it should **not** trust:
   permissions is tightened when it is loaded.
 * Crash reports and process inspection redact credentials: the Reddit
   token struct hides its token, and the poller's state is scrubbed
-  before it is logged. The stream worker (Bluesky) does the same: its
+  before it is logged. The stream worker (Bluesky, Discord) does the same: its
   platform state shows as `redacted` in crash reports and `:sys`
   inspection.
 * HTTP error responses are shortened before they are logged, so an API
@@ -47,17 +47,21 @@ And what SMM Monitor reads that it should **not** trust:
   `not set`.
 * The database, reports and their directories are created readable only
   by the user SMM Monitor runs as. The systemd unit adds `UMask=0077`.
-  Bluesky's resume position (`bluesky.cursor`, next to the database) is
-  written `0600` through a temporary file and a rename.
+  The streams' resume positions (`bluesky.cursor` and `discord.cursor`,
+  next to the database) are written `0600` through an exclusively created
+  temporary file and a rename. Discord's lists the ids of the channels
+  being watched, so it is treated like the database.
 
-### Streaming connections (Bluesky)
+### Streaming connections (Bluesky, Discord)
 
 * `wss://` connections check the server's certificate against the
   system CA store and check that it matches the host name. Plain
   `ws://` is refused unless the host is the local machine, so a
   mistyped `SMM_BLUESKY_JETSTREAM_URL` cannot send traffic in the clear.
-* A single message is capped at **1 MB**, and a frame over the cap is
-  refused from its header alone, before any of it is read into memory.
+* A single message is capped at **1 MB** (8 MB for Discord, whose
+  server list for a large server can exceed 1 MB), and a frame over the
+  cap is refused from its header alone, before any of it is read into
+  memory.
   The server's handshake response is capped at **16 KB**. Either one
   closes the connection and it is reopened with back-off.
 * The connection only *receives*. Bluesky is never told the brand terms:
@@ -65,6 +69,30 @@ And what SMM Monitor reads that it should **not** trust:
   third party learns which brands you watch. The only outgoing request
   is the public profile lookup that turns an author's DID into a
   handle, and it carries author ids only.
+
+### The Discord bot
+
+* The bot token is sent in exactly three places: the Gateway's identify
+  and resume messages, and the `Authorization` header of the catch-up
+  requests to `https://discord.com/api/v10`. It is never put in a URL,
+  a log line, the status shown on screen or a crash report.
+* Discord tells the bot where to reconnect to resume a session. That
+  address is used only if it is `wss://` and its host ends in
+  `.discord.gg`, with no user name or password in it; anything else
+  falls back to `gateway.discord.gg`. A tampered or malformed address
+  therefore cannot be used to collect the token.
+* The invite link asks for **View Channels** and **Read Message
+  History** only (`permissions=66560`). The bot cannot post, react,
+  moderate, or read direct messages; it asks for the server, message
+  and message-content events and nothing else.
+* Server, channel and message ids are checked to be plain numbers
+  before a link is built, and links always point at
+  `https://discord.com/channels/...`. A message with a malformed id is
+  dropped.
+* Like Bluesky, Discord is never told the brand terms. Messages that do
+  not match are discarded unread and never stored.
+* Errors from the catch-up requests are logged with the HTTP status
+  and channel id only, never the response headers.
 
 ### Remote access (SSH)
 
@@ -101,6 +129,10 @@ Details: [ssh.md](ssh.md).
   both checked against a strict pattern first, and always point at
   `https://bsky.app`. Handles from the network are checked the same way
   before they are shown; one that fails is replaced by the author id.
+* Discord's `<@id>`, `<#id>`, `<@&id>` and custom-emoji codes are turned
+  into plain `@name`, `#channel` and `:emoji:` text, and names go through
+  the same clean-up as message text, so a user name cannot carry escape
+  sequences on to the screen.
 * Values read back from the database are matched against a fixed list
   rather than turned into new atoms, so stored data cannot exhaust the
   Erlang atom table.

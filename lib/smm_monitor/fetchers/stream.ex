@@ -30,6 +30,8 @@ defmodule SmmMonitor.Fetchers.Stream do
       the module says otherwise.
     * no extra headers, no frames on open, no heartbeat, no idle timeout.
     * `tick/1`, `on_disconnect/1` and `enrich/2` pass the state through.
+    * a close from the server reconnects; this end closes with 1000; a
+      message may be up to 1 MB.
     * `mock_fetch/2` uses the shared fixtures, as a fetcher's does.
   """
 
@@ -82,8 +84,16 @@ defmodule SmmMonitor.Fetchers.Stream do
   @doc "How often to call `heartbeat/1`, in ms, or nil for never."
   @callback heartbeat_ms(state()) :: pos_integer() | nil
 
-  @doc "Frames to send on each heartbeat."
-  @callback heartbeat(state()) :: {[frame()], state()}
+  @doc """
+  Frames to send on each heartbeat, or `{:reconnect, state}` when the
+  connection has gone quiet in a way the platform can detect (Discord's
+  missing heartbeat acknowledgement).
+
+  `heartbeat_ms/1` is asked again after every message, so a platform that
+  only learns its interval from the server (Discord's Hello) can start
+  beating then.
+  """
+  @callback heartbeat(state()) :: {[frame()], state()} | {:reconnect, state()}
 
   @doc """
   Reconnect when nothing has arrived for this long, in ms, or nil.
@@ -93,8 +103,31 @@ defmodule SmmMonitor.Fetchers.Stream do
   """
   @callback idle_timeout_ms() :: pos_integer() | nil
 
-  @doc "Called every few seconds while live, for periodic work such as saving a cursor."
-  @callback tick(state()) :: state()
+  @doc """
+  Called every few seconds while live, for periodic work such as saving a
+  cursor or catching up on posts missed while disconnected. Any posts
+  returned are matched and stored like ones from the stream.
+  """
+  @callback tick(state()) :: {[map()], state()}
+
+  @doc """
+  The server closed the connection with `code` (nil when it gave none).
+
+  `{:reconnect, state}` reconnects with back-off, as for any drop.
+  `{:stop, reason, state}` is for a code that says retrying cannot help,
+  such as a rejected token.
+  """
+  @callback handle_close(integer() | nil, state()) ::
+              {:reconnect, state()} | {:stop, term(), state()}
+
+  @doc """
+  The close code to send when this end closes the connection. 1000 by
+  default; Discord needs another code to keep its session resumable.
+  """
+  @callback close_code(state()) :: pos_integer()
+
+  @doc "The largest single message accepted, in bytes. 1 MB by default."
+  @callback max_message_bytes() :: pos_integer()
 
   @doc "Called when a connection ends, for any reason."
   @callback on_disconnect(state()) :: state()
@@ -146,7 +179,16 @@ defmodule SmmMonitor.Fetchers.Stream do
       def idle_timeout_ms, do: nil
 
       @impl true
-      def tick(state), do: state
+      def tick(state), do: {[], state}
+
+      @impl true
+      def handle_close(_code, state), do: {:reconnect, state}
+
+      @impl true
+      def close_code(_state), do: 1000
+
+      @impl true
+      def max_message_bytes, do: 1_048_576
 
       @impl true
       def on_disconnect(state), do: state
@@ -167,6 +209,9 @@ defmodule SmmMonitor.Fetchers.Stream do
                      heartbeat_ms: 1,
                      idle_timeout_ms: 0,
                      tick: 1,
+                     handle_close: 2,
+                     close_code: 1,
+                     max_message_bytes: 0,
                      on_disconnect: 1,
                      enrich: 2,
                      mock_fetch: 2,

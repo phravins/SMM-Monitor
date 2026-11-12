@@ -8,7 +8,7 @@ the tests. For running it as a service, see [DEPLOY.md](../DEPLOY.md).
 ## Data flow
 
 ```
- Reddit · YouTube · X · Instagram          Bluesky (Jetstream)
+ Reddit · YouTube · X · Instagram     Bluesky (Jetstream) · Discord (Gateway)
         (HTTPS APIs, polled)               (WebSocket, pushed)
               │                                    │
               ▼                                    ▼
@@ -48,7 +48,8 @@ SmmMonitor.Supervisor                    (one_for_one)
 │   ├── PlatformSupervisor(:youtube)   → Worker(:youtube)
 │   ├── PlatformSupervisor(:twitter)   → Worker(:twitter)
 │   ├── PlatformSupervisor(:instagram) → Worker(:instagram)
-│   └── PlatformSupervisor(:bluesky)   → StreamWorker(:bluesky)
+│   ├── PlatformSupervisor(:bluesky)   → StreamWorker(:bluesky)
+│   └── PlatformSupervisor(:discord)   → StreamWorker(:discord)
 └── Ratatouille.Runtime.Supervisor       only when the TUI is enabled
 ```
 
@@ -89,6 +90,10 @@ of asking for them. Three things differ from polling:
   reconnect with exponential back-off and jitter (1s doubling to 60s).
   A platform that returns `{:stop, reason}` (a revoked token, say) is
   left alone for 10 minutes. No clients means no connection at all.
+  The platform decides what a server's close code means
+  (`handle_close/2`) and whether a missed heartbeat acknowledgement means
+  a dead connection (`heartbeat/1` returning `{:reconnect, state}`), so
+  Discord can stop on a rejected token and resume on anything else.
 
 `StreamWorker.status/1` returns the same map shape as `Worker.status/1`,
 plus `transport: :stream`, `connection` (`:connected`, `:reconnecting`,
@@ -298,7 +303,10 @@ supervisor needs editing. Add credentials to `config/runtime.exs` and
 `.env.example` if the platform needs them.
 
 The one place that isn't automatic: `TUI.Model`'s tab shortcuts are a fixed
-map (`a`/`t`/`i`/`r`/`y`/`b`) — pick a free letter and add it there.
+map (`a`/`t`/`i`/`r`/`y`/`b`/`d`) — pick a free letter and add it there.
+A letter the config screen already uses (`d` removes a client there)
+needs that screen's clauses placed above the tab-key clause in
+`handle_key`, as `d` and `h` are.
 Add `tab: :when_on` to the config entry if the platform is off by
 default, so its tab only appears once it is switched on.
 
@@ -329,13 +337,28 @@ defmodule SmmMonitor.Fetchers.Example do
 end
 ```
 
-The other callbacks have defaults: `headers/1`, `on_open/1` (frames to
-send once connected), `heartbeat_ms/1` and `heartbeat/1`,
-`idle_timeout_ms/0` (reconnect after this long with no message),
-`tick/1` (periodic work, such as saving a cursor), `on_disconnect/1`
-and `enrich/2`. `handle_message/2` can also return `{:reconnect, state}`
-or `{:stop, reason, state}`. `lib/smm_monitor/fetchers/bluesky.ex` is
-the worked example, including resuming from a saved cursor.
+The other callbacks have defaults:
+
+| Callback | Default | Use it for |
+| --- | --- | --- |
+| `headers/1` | none | Extra handshake headers |
+| `on_open/1` | send nothing | Frames to send once connected |
+| `heartbeat_ms/1`, `heartbeat/1` | no heartbeat | A keep-alive the server expects. `heartbeat_ms/1` is asked again after every message, so a server that announces its interval (Discord's Hello) can start it late. `heartbeat/1` may return `{:reconnect, state}` |
+| `idle_timeout_ms/0` | 60 s | Reconnect after this long with no message |
+| `tick/1` | `{[], state}` | Periodic work, such as saving a cursor. Returns `{posts, state}`; the posts are matched and batched like live ones (Discord's catch-up arrives this way) |
+| `handle_close/2` | reconnect | What a close code from the server means: `{:reconnect, state}` or `{:stop, reason, state}` |
+| `close_code/1` | `1000` | The code sent when closing. Discord uses `4000` while it has a session, because `1000` ends the session |
+| `max_message_bytes/0` | 1 MB | The largest message accepted |
+| `on_disconnect/1` | nothing | Saving state when the connection drops |
+| `enrich/2` | nothing | Work on each batch of matched posts |
+
+`handle_message/2` can also return `{:reconnect, state}` or
+`{:stop, reason, state}`. `lib/smm_monitor/fetchers/bluesky.ex` is the
+simple worked example, including resuming from a saved cursor
+(`SmmMonitor.Fetchers.CursorFile` writes it privately and atomically).
+`lib/smm_monitor/fetchers/discord.ex` uses everything: a late
+heartbeat, session resume, close codes, and a rate-limited catch-up
+from `tick/1`.
 
 
 ## Testing
@@ -395,7 +418,11 @@ terminal.
   that a test drives directly: send a message, a malformed frame or a
   close code, or drop the TCP connection, and assert on what the worker
   does. Bluesky's parsing uses recorded Jetstream messages, and its
-  profile lookups go through `test/support/bluesky_stub.ex`.
+  profile lookups go through `test/support/bluesky_stub.ex`. Discord's
+  tests play the Gateway from the fake server (Hello, identify, resume,
+  close codes), and its catch-up requests go through
+  `test/support/discord_stub.ex`, where a test's handler answers each
+  request (by channel, say) and can return rate-limit headers.
 
 Tests run with `start_fetchers: false` and `start_tui: false`, so they get
 the processing layer and nothing else: no 30s polls racing assertions.
@@ -571,7 +598,8 @@ Compile-time defaults live in `config/config.exs`:
 | `SmmMonitor.Fetchers.Twitter` | see above | Page size, monthly post budget, billing cycle day |
 | `SmmMonitor.Fetchers.Instagram` | see above | Which sources to poll, hashtags, page sizes |
 | `SmmMonitor.Fetchers.Bluesky` | see below | Switch, Jetstream server, cursor file |
-| `:platforms` | five entries | Platform → module, `kind` (`:poll` or `:stream`), enabled flag, `tab: :when_on`, opts |
+| `SmmMonitor.Fetchers.Discord` | see below | Server and channel allow-lists, cursor file |
+| `:platforms` | six entries | Platform → module, `kind` (`:poll` or `:stream`), enabled flag, `tab: :when_on`, opts |
 
 Reddit has its own block, since these are deployment choices rather than
 app-wide ones:
@@ -603,6 +631,17 @@ config :smm_monitor, SmmMonitor.Fetchers.Bluesky,
   # cursor_file: "/path",  # unset = bluesky.cursor next to the database;
                            # nil = don't save, start from "now" each time
   resolve_handles: true    # look up handles for author ids
+```
+
+And Discord (the token is a credential, `DISCORD_BOT_TOKEN`):
+
+```elixir
+config :smm_monitor, SmmMonitor.Fetchers.Discord,
+  guilds: [],              # SMM_DISCORD_GUILDS; [] and channels [] = everywhere
+  channels: [],            # SMM_DISCORD_CHANNELS; threads follow their parent
+  # cursor_file: "/path",  # unset = discord.cursor next to the database;
+                           # nil = don't save, no catch-up after a restart
+  # gateway_url: "ws://127.0.0.1:4000/"  # tests only
 ```
 
 A platform may also set its own `:interval_ms` in the `:platforms` config;

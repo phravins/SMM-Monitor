@@ -277,6 +277,10 @@ defmodule SmmMonitor.TUI.Renderers.Common do
               [text(content: "b", color: @accent, attributes: @bold), text(content: "luesky ")]
             end
 
+            if :discord in model.tabs do
+              [text(content: "d", color: @accent, attributes: @bold), text(content: "iscord ")]
+            end
+
             text(content: "←/→", color: @accent, attributes: @bold)
             text(content: " · ")
             text(content: "c", color: @accent, attributes: @bold)

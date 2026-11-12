@@ -38,6 +38,7 @@ defmodule SmmMonitor.Fetchers.Bluesky do
 
   require Logger
 
+  alias SmmMonitor.Fetchers.CursorFile
   alias SmmMonitor.WebSocket
 
   @default_url "wss://jetstream2.us-east.bsky.network/subscribe"
@@ -166,9 +167,9 @@ defmodule SmmMonitor.Fetchers.Bluesky do
     now = System.monotonic_time(:millisecond)
 
     if state.last_save_mono == nil or now - state.last_save_mono >= @save_every_ms do
-      save_cursor(%{state | last_save_mono: now})
+      {[], save_cursor(%{state | last_save_mono: now})}
     else
-      state
+      {[], state}
     end
   end
 
@@ -247,19 +248,13 @@ defmodule SmmMonitor.Fetchers.Bluesky do
 
   defp cursor_file do
     case Keyword.fetch(settings(), :cursor_file) do
-      {:ok, file} ->
-        file
-
-      :error ->
-        database = Application.get_env(:smm_monitor, SmmMonitor.Repo, [])[:database]
-        if database, do: Path.join(Path.dirname(database), "bluesky.cursor")
+      {:ok, file} -> file
+      :error -> CursorFile.default_path("bluesky.cursor")
     end
   end
 
-  defp read_cursor(nil), do: nil
-
   defp read_cursor(file) do
-    with {:ok, contents} <- File.read(file),
+    with contents when is_binary(contents) <- CursorFile.read(file),
          {cursor, ""} when cursor > 0 <- contents |> String.trim() |> Integer.parse() do
       cursor
     else
@@ -272,17 +267,7 @@ defmodule SmmMonitor.Fetchers.Bluesky do
   defp save_cursor(%State{cursor: same, saved_cursor: same} = state), do: state
 
   defp save_cursor(state) do
-    file = state.cursor_file
-    temporary = file <> ".tmp"
-
-    result =
-      with :ok <- SmmMonitor.Paths.ensure_private_dir(Path.dirname(file), only_if_created: true),
-           :ok <- File.write(temporary, Integer.to_string(state.cursor)),
-           :ok <- File.chmod(temporary, 0o600) do
-        File.rename(temporary, file)
-      end
-
-    case result do
+    case CursorFile.write(state.cursor_file, Integer.to_string(state.cursor)) do
       :ok ->
         %{state | saved_cursor: state.cursor}
 

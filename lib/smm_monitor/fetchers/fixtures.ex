@@ -36,7 +36,14 @@ defmodule SmmMonitor.Fetchers.Fixtures do
     youtube: ~w(@ChannelCraft @SocialSuiteReviews @DailyOpsTV @toolteardown @martech_mary),
     twitter: ~w(@lena_builds @ops_owen @brandwatchpro @cmo_carla @devrel_dan),
     instagram: ~w(@studio.north @thegrowthgram @agencylife.daily @maya.makes @brandbites),
-    bluesky: ~w(@lena.bsky.social @opsowen.dev @priya-writes.bsky.social @tomfromsales.com)
+    bluesky: ~w(@lena.bsky.social @opsowen.dev @priya-writes.bsky.social @tomfromsales.com),
+    discord: [
+      "maya (#general)",
+      "devdan (#support)",
+      "Owen | Ops (#feedback)",
+      "priya (#announcements)",
+      "tom_sales (#off-topic)"
+    ]
   }
 
   @doc """
