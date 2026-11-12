@@ -58,7 +58,7 @@ defmodule SmmMonitor.Fetchers.Instagram do
 
   require Logger
 
-  alias SmmMonitor.Fetchers.Fetcher
+  alias SmmMonitor.Fetchers.{Fetcher, MetaGraph}
   alias SmmMonitor.Fetchers.Instagram.{Sources, State, Throttle}
 
   @graph_host "https://graph.facebook.com"
@@ -349,29 +349,25 @@ defmodule SmmMonitor.Fetchers.Instagram do
   defp handle_response({:ok, %{status: status, body: body, headers: headers}}, state)
        when status in [400, 401, 403] do
     state = %{state | throttle: Throttle.observe(state.throttle, headers)}
-    error = graph_error(body)
 
-    cond do
-      # 190/463: the long-lived token has passed its 60 days. This is the
-      # single most common way an Instagram integration stops working, so
-      # it gets its own error rather than a generic 400.
-      expired_token?(error) ->
-        {:error, {:expired_access_token, error["message"]}, state}
+    case MetaGraph.classify(body) do
+      # The long-lived token has passed its 60 days. This is the single
+      # most common way an Instagram integration stops working, so it gets
+      # its own error rather than a generic 400.
+      {:expired_token, message} ->
+        {:error, {:expired_access_token, message}, state}
 
-      # 4 and 32 are Meta's throttling codes; 613 is a per-edge limit.
-      throttled?(error) ->
-        minutes = get_in(error, ["error_data", "estimated_time_to_regain_access"])
-
+      {{:throttled, minutes}, _message} ->
         {:error, :rate_limited_by_meta,
          %{state | throttle: Throttle.block(state.throttle, minutes)}}
 
-      # 10 and 200..299 are permission errors: the token is fine but this
-      # edge isn't granted. Naming the missing scope saves an afternoon.
-      permission_error?(error) ->
-        {:error, {:missing_permission, error["message"]}, state}
+      # The token is fine but this edge isn't granted. Naming the missing
+      # scope saves an afternoon.
+      {:missing_permission, message} ->
+        {:error, {:missing_permission, message}, state}
 
-      true ->
-        {:error, {:graph_error, status, error["message"] || "unknown"}, state}
+      {:other, message} ->
+        {:error, {:graph_error, status, message || "unknown"}, state}
     end
   end
 
@@ -441,20 +437,6 @@ defmodule SmmMonitor.Fetchers.Instagram do
 
   defp author(username) when is_binary(username) and username != "", do: "@" <> username
   defp author(_username), do: "@unknown"
-
-  defp graph_error(%{"error" => %{} = error}), do: error
-  defp graph_error(_body), do: %{}
-
-  defp expired_token?(%{"code" => 190}), do: true
-  defp expired_token?(%{"error_subcode" => subcode}) when subcode in [463, 467], do: true
-  defp expired_token?(_error), do: false
-
-  defp throttled?(%{"code" => code}) when code in [4, 17, 32, 613], do: true
-  defp throttled?(_error), do: false
-
-  defp permission_error?(%{"code" => 10}), do: true
-  defp permission_error?(%{"code" => code}) when code in 200..299, do: true
-  defp permission_error?(_error), do: false
 
   defp summary_suffix(state) do
     case Throttle.summary(state.throttle) do

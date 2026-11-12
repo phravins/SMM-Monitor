@@ -30,3 +30,6 @@ config :logger, level: :warning
 # The suite is not that person: without this, every test that presses a
 # key would be pressing it into a setup screen.
 config :smm_monitor, setup_complete: true
+
+# The Threads token file would otherwise land next to the test database.
+config :smm_monitor, SmmMonitor.Fetchers.Threads, token_file: nil

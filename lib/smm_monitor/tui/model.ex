@@ -89,7 +89,8 @@ defmodule SmmMonitor.TUI.Model do
 
   @type t :: %__MODULE__{}
 
-  # Tab shortcuts: a for all, t/i/r/y/b/d for the platforms, c for config.
+  # Tab shortcuts: a for all, t/i/r/y/b/d/e for the platforms (e for
+  # thr*e*ads: t, h, r and a were taken), h for trends, c for config.
   # Digits are taken (they pick a client), so platforms past these get
   # letters too, and the left and right arrows step through every tab.
   @tab_keys %{
@@ -100,6 +101,7 @@ defmodule SmmMonitor.TUI.Model do
     ?y => :youtube,
     ?b => :bluesky,
     ?d => :discord,
+    ?e => :threads,
     ?h => :trends,
     ?c => :config
   }
@@ -243,6 +245,9 @@ defmodule SmmMonitor.TUI.Model do
 
   def handle_key(%__MODULE__{tab: :config} = model, {:char, ?d}), do: confirm_remove(model)
 
+  # `e` edits the highlighted field here, and opens Threads everywhere else.
+  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?e}), do: start_editing(model)
+
   def handle_key(%__MODULE__{} = model, {:char, char}) when is_map_key(@tab_keys, char) do
     select_tab(model, @tab_keys[char])
   end
@@ -274,7 +279,6 @@ defmodule SmmMonitor.TUI.Model do
     do: move_field(model, 1)
 
   def handle_key(%__MODULE__{tab: :config} = model, {:key, :arrow_left}), do: move_field(model, -1)
-  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?e}), do: start_editing(model)
   def handle_key(%__MODULE__{tab: :config} = model, {:key, :enter}), do: start_editing(model)
   def handle_key(%__MODULE__{tab: :config} = model, {:char, ?+}), do: start_adding(model)
   def handle_key(%__MODULE__{tab: :config} = model, {:char, ?p}), do: toggle_active(model)
@@ -409,9 +413,9 @@ defmodule SmmMonitor.TUI.Model do
           "  press c  then  S   to add Reddit or YouTube keys (both free)",
           "",
           "Reddit takes about three minutes and searches the subreddits",
-          "set for each client (all of Reddit if none are set). X and",
-          "Instagram are set up with environment variables — see",
-          "docs/platforms.md.",
+          "set for each client (all of Reddit if none are set). X,",
+          "Instagram and Threads are set up with environment variables —",
+          "see docs/platforms.md.",
           "",
           "Just looking around? Start it with SMM_DEMO=1 for invented",
           "data, clearly labelled DEMO DATA in the top line."
@@ -548,7 +552,7 @@ defmodule SmmMonitor.TUI.Model do
   a bug. The counts are the part that can go: they are repeated in the
   summary panel a line below, where the platform tabs' numbers are the
   ones being read anyway. If the bare names still do not fit, the long
-  ones are abbreviated (`insta`, `yt`, `bsky`).
+  ones are abbreviated (`insta`, `yt`, `bsky`, `cfg`).
   """
   @spec tab_labels(t()) :: [{atom(), String.t()}]
   def tab_labels(%__MODULE__{} = model) do
@@ -572,6 +576,9 @@ defmodule SmmMonitor.TUI.Model do
   defp tiny_tab_label(:youtube), do: "yt"
   defp tiny_tab_label(:bluesky), do: "bsky"
   defp tiny_tab_label(:discord), do: "disc"
+  defp tiny_tab_label(:threads), do: "thrd"
+  defp tiny_tab_label(:trends), do: "trnd"
+  defp tiny_tab_label(:config), do: "cfg"
   defp tiny_tab_label(tab), do: short_tab_label(tab)
 
   defp drawn_width(labels) do

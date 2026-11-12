@@ -219,7 +219,8 @@ config :smm_monitor, :mock_platforms,
   twitter: RC.bool_or_nil("SMM_MOCK_TWITTER"),
   instagram: RC.bool_or_nil("SMM_MOCK_INSTAGRAM"),
   bluesky: RC.bool_or_nil("SMM_MOCK_BLUESKY"),
-  discord: RC.bool_or_nil("SMM_MOCK_DISCORD")
+  discord: RC.bool_or_nil("SMM_MOCK_DISCORD"),
+  threads: RC.bool_or_nil("SMM_MOCK_THREADS")
 
 # YouTube polls on its own schedule because of the API's daily quota.
 # See the README for the arithmetic behind picking a value.
@@ -263,6 +264,39 @@ end
 
 if interval_ms = RC.integer_or_nil("SMM_INSTAGRAM_POLL_INTERVAL_MS") do
   config :smm_monitor, :platforms, instagram: [interval_ms: interval_ms]
+end
+
+# Threads. Which sources to read: keyword search, the account's
+# mentions, and replies to its own posts (opt-in). A typo stops the boot
+# by name rather than silently reading nothing.
+if sources = System.get_env("SMM_THREADS_SOURCES") do
+  known = ~w(search mentions replies)
+  sources = RC.list("SMM_THREADS_SOURCES", [])
+
+  case Enum.reject(sources, &(&1 in known)) do
+    [] ->
+      config :smm_monitor, SmmMonitor.Fetchers.Threads,
+        sources: Enum.map(sources, &String.to_atom/1)
+
+    bad ->
+      raise ArgumentError,
+            "SMM_THREADS_SOURCES may list #{Enum.join(known, ", ")}; " <>
+              "got #{Enum.map_join(bad, ", ", &inspect/1)}"
+  end
+end
+
+# Keyword searches allowed per rolling 24 hours. Meta's limit is 2,200,
+# shared by every app on the same Threads account.
+if budget = RC.integer_or_nil("SMM_THREADS_DAILY_QUERY_BUDGET") do
+  unless budget in 1..2_200 do
+    raise ArgumentError, "SMM_THREADS_DAILY_QUERY_BUDGET must be between 1 and 2200"
+  end
+
+  config :smm_monitor, SmmMonitor.Fetchers.Threads, daily_query_budget: budget
+end
+
+if interval_ms = RC.integer_or_nil("SMM_THREADS_POLL_INTERVAL_MS") do
+  config :smm_monitor, :platforms, threads: [interval_ms: interval_ms]
 end
 
 # Which subreddits the Reddit fetcher watches. Comma-separated; an empty
@@ -313,6 +347,9 @@ credentials = [
   ],
   discord: [
     bot_token: System.get_env("DISCORD_BOT_TOKEN")
+  ],
+  threads: [
+    access_token: System.get_env("THREADS_ACCESS_TOKEN")
   ]
 ]
 

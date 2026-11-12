@@ -1,0 +1,34 @@
+{
+  "data": [
+    {
+      "id": "18050206876707110",
+      "text": "Switched the whole studio over to Acme this week and the onboarding was smooth",
+      "media_type": "TEXT_POST",
+      "permalink": "https://www.threads.com/@maya.makes/post/DBa1Zx2yQ3k",
+      "timestamp": "2026-11-12T09:41:12+0000",
+      "username": "maya.makes"
+    },
+    {
+      "id": "18028512391170041",
+      "text": "is acme down for anyone else? uploads failing since 9am",
+      "media_type": "TEXT_POST",
+      "permalink": "https://www.threads.com/@ops.owen/post/DBa0Qw8xLm2",
+      "timestamp": "2026-11-12T09:12:47+0000",
+      "username": "ops.owen"
+    },
+    {
+      "id": "17999123456789012",
+      "text": "Acme dashboard screenshot from our Monday review",
+      "media_type": "IMAGE",
+      "permalink": "https://www.threads.net/@thebrandroom/post/DBZz9kLm1Pq",
+      "timestamp": "2026-11-12T08:03:00+0000",
+      "username": "thebrandroom"
+    }
+  ],
+  "paging": {
+    "cursors": {
+      "before": "QVFIUkFZAa2xIUzR2",
+      "after": "QVFIUlZAhcU5yX3V"
+    }
+  }
+}

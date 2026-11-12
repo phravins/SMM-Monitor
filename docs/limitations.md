@@ -96,6 +96,23 @@
   parent channel, so a thread whose parent the bot has not seen yet
   (for example, one in a server still loading) is skipped until it has.
 * Discord matching is whole words only, the same as Bluesky.
+* **Threads search only covers your own account's posts until Meta
+  approves the app in App Review** for `threads_keyword_search`, and
+  mentions only come from the app's testers until
+  `threads_manage_mentions` is approved. Before then the Threads tab is
+  mostly empty, and correctly so.
+* Threads' 2,200 searches a day are **shared with every other app** the
+  account has authorised. The budget here is our own count: it can't see
+  other apps' searches, it counts searches that found nothing (Meta
+  doesn't), and it starts from zero when the app restarts.
+* A Threads **mention is stored only if it names one of the client's
+  brand terms**; one that only @-mentions the account is dropped.
+  **Replies** to the account's own posts (opt-in) go to every client.
+* Threads never returns **private profiles**, returns nothing for some
+  sensitive keywords, and **edits and deletions are not followed**.
+* The Threads token renews itself, but only while the app runs: if it is
+  not started for **60 days**, the token expires and a new one has to be
+  made by hand.
 * SSH access has no rate limiting or audit trail beyond one log line per
   connection — run it behind a VPN or firewall rather than exposed.
 * Remote sessions are read-only; there's no per-user permission model,

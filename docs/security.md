@@ -94,6 +94,31 @@ And what SMM Monitor reads that it should **not** trust:
 * Errors from the catch-up requests are logged with the HTTP status
   and channel id only, never the response headers.
 
+### The Threads token
+
+* The token goes only to `https://graph.threads.net`, over HTTPS with
+  the certificate checked. Meta's API takes it as a query parameter, so
+  request URLs are never logged, and errors are logged with the HTTP
+  status and Meta's message only. A network error is logged by its
+  reason alone, because the exception would carry the request.
+* The token is left out of the fetcher's state when it is inspected,
+  and the poller's whole platform state is redacted from status and
+  crash reports.
+* A renewed token is kept in `threads_token.json`, next to the database,
+  written `0600` through an exclusively created temporary file and a
+  rename. The token from `THREADS_ACCESS_TOKEN` is never written to disk:
+  the file stores a SHA-256 hash of it, only to notice when a different
+  one is pasted. A token read from the file is used only if it looks
+  like one (printable characters, no spaces, at most 4 KB), so a
+  tampered file cannot inject anything into a request.
+* Post and account ids are checked to be plain numbers before they go
+  into a request path or a mention id, and usernames are checked
+  against Threads' own character set; anything else is dropped or shown
+  as `@unknown`. Links are kept only when they are `https` links to
+  `threads.com` or `threads.net` with no user name in them.
+* The connected account is read-only here: SMM Monitor never posts,
+  replies or deletes, and does not ask for the permissions to.
+
 ### Remote access (SSH)
 
 Off by default. When it is on:
