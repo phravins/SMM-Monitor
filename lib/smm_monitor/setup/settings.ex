@@ -20,7 +20,18 @@ defmodule SmmMonitor.Setup.Settings do
   `apply/0` fills in credentials the environment didn't supply — it
   never overrides one. A server with `REDDIT_CLIENT_ID` in its systemd
   unit behaves exactly as it did before this file existed, whatever is
-  written here.
+  written here. (`config/runtime.exs` records which credentials came
+  from the environment as `:env_credentials`; those are the protected
+  ones.)
+
+  A key that came from this file, on the other hand, is replaced the
+  moment the wizard saves a new one, so correcting a mistyped key takes
+  effect on the next poll instead of the next restart.
+
+  ## Re-running the wizard
+
+  `save/2` merges into the existing file. Skipping a step the second
+  time round keeps whatever was saved for it the first time.
 
   ## Failure handling
 
@@ -59,9 +70,17 @@ defmodule SmmMonitor.Setup.Settings do
   @spec load(Path.t()) :: {:ok, map()} | :missing | {:error, term()}
   def load(file \\ path()) do
     case File.read(file) do
-      {:ok, contents} -> decode(contents)
-      {:error, :enoent} -> :missing
-      {:error, reason} -> {:error, reason}
+      {:ok, contents} ->
+        # A file copied in by hand, or written by an older version, may be
+        # readable by everyone. It holds API keys, so put that right.
+        _ = Paths.restrict_file(file)
+        decode(contents)
+
+      {:error, :enoent} ->
+        :missing
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -73,22 +92,31 @@ defmodule SmmMonitor.Setup.Settings do
   """
   @spec save(map(), Path.t()) :: :ok | {:error, term()}
   def save(settings, file \\ path()) do
+    previous =
+      case load(file) do
+        {:ok, %{credentials: credentials}} -> credentials
+        _other -> %{}
+      end
+
     document = %{
       "version" => @version,
       "completed_at" => DateTime.to_iso8601(settings[:completed_at] || DateTime.utc_now()),
-      "credentials" => encode_credentials(settings[:credentials] || %{})
+      "credentials" => encode_credentials(merge_stored(previous, settings[:credentials] || %{}))
     }
 
-    temporary = "#{file}.tmp-#{System.unique_integer([:positive])}"
+    temporary =
+      "#{file}.tmp-" <> Base.url_encode64(:crypto.strong_rand_bytes(9), padding: false)
 
     # The order matters. Writing first and tightening the mode afterwards
     # publishes the keys to every account on the machine for as long as
     # the chmod takes - short, but a local attacker only has to poll a
-    # directory. Create the file empty, restrict it, then put the secrets
-    # in a file nobody else can open.
+    # directory. So: an owner-only directory, a temporary file created
+    # exclusively (it cannot already exist, so it cannot be somebody
+    # else's file or a symlink to one), restricted before anything is
+    # written to it, then renamed into place.
     with {:ok, json} <- Jason.encode(document, pretty: true),
-         :ok <- File.mkdir_p(Path.dirname(file)),
-         :ok <- File.touch(temporary),
+         :ok <- Paths.ensure_private_dir(Path.dirname(file)),
+         :ok <- create_exclusive(temporary),
          :ok <- File.chmod(temporary, 0o600),
          :ok <- File.write(temporary, json <> "\n"),
          :ok <- File.rename(temporary, file) do
@@ -151,13 +179,15 @@ defmodule SmmMonitor.Setup.Settings do
   @spec merge(map()) :: :ok
   def merge(credentials) do
     existing = Application.get_env(:smm_monitor, :credentials, [])
+    from_environment = SmmMonitor.config(:env_credentials, [])
 
     merged =
       Enum.reduce(@credential_fields, existing, fn {platform, field}, accumulator ->
         stored = get_in(credentials, [platform, field])
         current = accumulator |> Keyword.get(platform, []) |> Keyword.get(field)
+        pinned? = {platform, field} in from_environment and not blank?(current)
 
-        if blank?(current) and not blank?(stored) do
+        if not pinned? and not blank?(stored) do
           platform_credentials =
             accumulator |> Keyword.get(platform, []) |> Keyword.put(field, stored)
 
@@ -185,7 +215,38 @@ defmodule SmmMonitor.Setup.Settings do
     end
   end
 
+  @doc """
+  Which platforms' keys differ between two credential maps.
+
+  The wizard uses it to poll only the platforms whose keys changed.
+  """
+  @spec changed_platforms(keyword(), keyword()) :: [atom()]
+  def changed_platforms(before, after_merge) do
+    @credential_fields
+    |> Enum.filter(fn {platform, field} ->
+      get_in(before, [platform, field]) != get_in(after_merge, [platform, field])
+    end)
+    |> Enum.map(&elem(&1, 0))
+    |> Enum.uniq()
+  end
+
   # --- internals ------------------------------------------------------------
+
+  # Newly entered, non-blank values win; everything else that was stored
+  # stays. A platform the wizard skipped arrives with no fields at all.
+  defp merge_stored(previous, new) do
+    Map.merge(previous, new, fn _platform, old_fields, new_fields ->
+      fresh = for {field, value} <- new_fields, not blank?(value), into: %{}, do: {field, value}
+      Map.merge(old_fields, fresh)
+    end)
+  end
+
+  defp create_exclusive(file) do
+    case File.open(file, [:write, :exclusive]) do
+      {:ok, device} -> File.close(device)
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   # A platform whose credentials just arrived should start using them.
   # Only that platform: turning the global mock switch off would put

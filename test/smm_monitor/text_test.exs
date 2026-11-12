@@ -65,6 +65,35 @@ defmodule SmmMonitor.TextTest do
     test "passes nil through" do
       assert Text.safe(nil) == nil
     end
+
+    test "removes invisible characters used to hide or split words" do
+      for char <- [0x200B, 0x2060, 0xFEFF, 0xFFF9, 0x061C] do
+        assert Text.safe("real" <> <<char::utf8>> <> "office") == "realoffice",
+               "U+#{Integer.to_string(char, 16)} survived"
+      end
+    end
+
+    test "keeps the joiners that emoji and scripts need" do
+      family = "👨" <> <<0x200D::utf8>> <> "👩" <> <<0x200D::utf8>> <> "👧"
+      assert Text.safe(family) == family
+    end
+
+    test "turns line and paragraph separators into spaces" do
+      assert Text.safe("one" <> <<0x2028::utf8>> <> "two") == "one two"
+      assert Text.safe("one" <> <<0x2029::utf8>> <> "two") == "one two"
+    end
+
+    test "caps a pile of combining marks" do
+      zalgo = "a" <> String.duplicate(<<0x0301::utf8>>, 40) <> "b"
+      cleaned = Text.safe(zalgo)
+
+      assert String.length(cleaned) == 2
+      assert byte_size(cleaned) == byte_size("a" <> String.duplicate(<<0x0301::utf8>>, 4) <> "b")
+    end
+
+    test "leaves ordinary accents alone" do
+      assert Text.safe("café naïve") == "café naïve"
+    end
   end
 
   describe "the sanitiser is wired into the paths that matter" do

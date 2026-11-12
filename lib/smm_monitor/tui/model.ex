@@ -136,7 +136,7 @@ defmodule SmmMonitor.TUI.Model do
       read_only: Map.get(context, :read_only, false),
       clients: clients,
       client_id: Map.get(context, :client_id) || default_client_id(clients),
-      mock_mode: SmmMonitor.config(:mock_mode, true),
+      mock_mode: SmmMonitor.config(:mock_mode, false),
       setup: initial_setup(context),
       trend_window: Trends.default_window(),
       window_ms: SmmMonitor.config(:window_ms, :timer.hours(24))
@@ -166,6 +166,9 @@ defmodule SmmMonitor.TUI.Model do
         stats: Monitor.stats(reading_tab, nil, scope),
         breakdown: Monitor.breakdown(nil, scope),
         statuses: statuses(),
+        # Read every tick, not once at start: choosing demo data in the
+        # wizard has to change the header straight away.
+        mock_mode: SmmMonitor.config(:mock_mode, false),
         alerts: read_alerts(scope),
         keywords: keywords_of(model),
         updated_at: DateTime.utc_now()
@@ -385,9 +388,10 @@ defmodule SmmMonitor.TUI.Model do
           "",
           "  press c  then  S   to add Reddit or YouTube keys (both free)",
           "",
-          "Reddit takes about three minutes and is the one that searches",
-          "all of Reddit for your brand terms. X and Instagram are set up",
-          "with environment variables — see the README.",
+          "Reddit takes about three minutes and searches the subreddits",
+          "set for each client (all of Reddit if none are set). X and",
+          "Instagram are set up with environment variables — see",
+          "docs/platforms.md.",
           "",
           "Just looking around? Start it with SMM_DEMO=1 for invented",
           "data, clearly labelled DEMO DATA in the top line."
@@ -582,7 +586,14 @@ defmodule SmmMonitor.TUI.Model do
   defp apply_setup(%__MODULE__{setup: setup} = model) do
     credentials = Setup.credentials(setup)
     saved = Settings.save(%{credentials: credentials, completed_at: DateTime.utc_now()})
+    before = SmmMonitor.config(:credentials, [])
     Settings.merge(credentials)
+
+    # A new key should show data in seconds, not after the next scheduled
+    # poll - which for YouTube can be most of twenty minutes away.
+    before
+    |> Settings.changed_platforms(SmmMonitor.config(:credentials, []))
+    |> Enum.each(&SmmMonitor.Fetchers.Worker.poll_now/1)
 
     # "Skip and look around with demo data" has to say so out loud now.
     # It used to work by doing nothing, because invented data was the
@@ -1130,6 +1141,32 @@ defmodule SmmMonitor.TUI.Model do
 
   defp alert_value(%AlertConfig{} = config, :webhook_url), do: config.webhook_url || ""
 
+  @doc """
+  A webhook URL as the config screen shows it: scheme, host and the last
+  four characters, or only "set" for a read-only session.
+
+      iex> SmmMonitor.TUI.Model.mask_webhook("https://hooks.slack.com/services/T0/B0/abcdefgh1234", false)
+      "https://hooks.slack.com/…1234"
+
+      iex> SmmMonitor.TUI.Model.mask_webhook("https://hooks.slack.com/services/T0/B0/abcdefgh1234", true)
+      "set (hidden in a read-only session)"
+  """
+  @spec mask_webhook(String.t(), boolean()) :: String.t()
+  def mask_webhook(_url, true), do: "set (hidden in a read-only session)"
+
+  def mask_webhook(url, false) do
+    host =
+      case URI.parse(url) do
+        %URI{scheme: scheme, host: host} when is_binary(scheme) and is_binary(host) ->
+          "#{scheme}://#{host}/"
+
+        _other ->
+          ""
+      end
+
+    host <> "…" <> String.slice(url, -4, 4)
+  end
+
   @doc "Human label for a client field."
   @spec label(atom()) :: String.t()
   def label(:watch_phrases), do: "alert phrases"
@@ -1267,6 +1304,58 @@ defmodule SmmMonitor.TUI.Model do
 
   defp columns_for(%{window: %{width: width}}) when is_integer(width), do: max(width, 40)
   defp columns_for(_context), do: @default_columns
+
+  @doc """
+  How fresh a platform's data is, for the status line.
+
+  Returns the age of the last successful poll and when the next is due,
+  or `nil` for a platform that is not collecting. A poll that last
+  succeeded more than three intervals ago is `:stale`: the worker is
+  running but something (a revoked key, a rate limit, the network) has
+  stopped it landing, and a dashboard that looks live while showing
+  hour-old data is worse than one that says so.
+
+      iex> now = ~U[2026-11-12 12:00:30Z]
+      iex> status = %{mode: :live, interval_ms: 30_000,
+      ...>   last_success_at: ~U[2026-11-12 12:00:18Z], next_poll_at: ~U[2026-11-12 12:00:48Z]}
+      iex> SmmMonitor.TUI.Model.freshness(status, now)
+      %{state: :fresh, age: "12s", next: "18s"}
+      iex> SmmMonitor.TUI.Model.freshness(%{status | last_success_at: ~U[2026-11-12 11:58:00Z]}, now)
+      %{state: :stale, age: "2m", next: "18s"}
+      iex> SmmMonitor.TUI.Model.freshness(%{mode: :unconfigured}, now)
+      nil
+  """
+  @spec freshness(map(), DateTime.t()) ::
+          %{state: :fresh | :stale | :waiting, age: String.t() | nil, next: String.t() | nil}
+          | nil
+  def freshness(%{mode: mode} = status, now) when mode in [:live, :mock] do
+    last = Map.get(status, :last_success_at)
+    next = Map.get(status, :next_poll_at)
+    interval = Map.get(status, :interval_ms) || 60_000
+
+    next_label =
+      case next do
+        %DateTime{} -> next |> DateTime.diff(now, :second) |> max(0) |> duration()
+        _other -> nil
+      end
+
+    case last do
+      %DateTime{} ->
+        age_ms = DateTime.diff(now, last, :millisecond)
+        state = if age_ms > 3 * interval, do: :stale, else: :fresh
+        %{state: state, age: duration(div(max(age_ms, 0), 1000)), next: next_label}
+
+      _never ->
+        %{state: :waiting, age: nil, next: next_label}
+    end
+  end
+
+  def freshness(_status, _now), do: nil
+
+  defp duration(seconds) when seconds < 60, do: "#{seconds}s"
+  defp duration(seconds) when seconds < 3600, do: "#{div(seconds, 60)}m"
+  defp duration(seconds) when seconds < 86_400, do: "#{div(seconds, 3600)}h"
+  defp duration(seconds), do: "#{div(seconds, 86_400)}d"
 
   # A worker that is mid-restart reports `:unavailable`; the dashboard shows
   # that rather than crashing along with it.

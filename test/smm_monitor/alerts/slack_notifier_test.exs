@@ -84,6 +84,34 @@ defmodule SmmMonitor.Alerts.Notifiers.SlackNotifierTest do
       assert context.elements |> hd() |> Map.get(:text) =~ "considering a lawsuit"
     end
 
+    test "a stranger's post cannot ping the channel or disguise a link" do
+      alert = phrase_alert()
+      hostile = "<!channel> <https://evil.test|Reset your password> & more"
+      alert = %{alert | client_name: "<!here> Acme", details: %{alert.details | excerpt: hostile}}
+
+      payload = SlackNotifier.payload(alert)
+      mrkdwn = mrkdwn_texts(payload)
+
+      refute mrkdwn =~ "<!channel>"
+      refute mrkdwn =~ "<!here>"
+      refute mrkdwn =~ "<https://"
+      assert mrkdwn =~ "&lt;!here&gt; Acme"
+
+      # The excerpt itself is plain text, which Slack never parses.
+      context = Enum.find(payload.blocks, &(&1[:type] == "context"))
+      assert [%{type: "plain_text", text: text}] = context.elements
+      assert text =~ "Reset your password"
+    end
+
+    test "a long excerpt is cut short" do
+      alert = phrase_alert()
+      alert = %{alert | details: %{alert.details | excerpt: String.duplicate("a", 1_000)}}
+
+      context = Enum.find(SlackNotifier.payload(alert).blocks, &(&1[:type] == "context"))
+      assert [%{text: text}] = context.elements
+      assert String.length(text) <= 302
+    end
+
     test "a volume alert says what normal was" do
       payload = SlackNotifier.payload(volume_alert(6.0))
       [_headline, %{fields: fields}] = payload.blocks
@@ -236,6 +264,19 @@ defmodule SmmMonitor.Alerts.Notifiers.SlackNotifierTest do
       opened_at: ~U[2026-09-12 12:00:00Z],
       details: %{observed: 42, baseline: 7.0, ratio: ratio, days_observed: 7}
     }
+  end
+
+  # Everything Slack would parse as mrkdwn: the fallback text and every
+  # mrkdwn text object in the blocks.
+  defp mrkdwn_texts(payload) do
+    block_texts =
+      Enum.flat_map(payload.blocks, fn block ->
+        [block[:text] | List.wrap(block[:fields]) ++ List.wrap(block[:elements])]
+        |> Enum.filter(&match?(%{type: "mrkdwn"}, &1))
+        |> Enum.map(& &1.text)
+      end)
+
+    Enum.join([payload.text | block_texts], "\n")
   end
 
   defp phrase_alert do

@@ -65,7 +65,9 @@ defmodule SmmMonitor.Mention do
     attrs = normalize_keys(attrs)
 
     %__MODULE__{
-      id: to_string(Map.get(attrs, :id) || generate_id()),
+      # The id comes from the platform too, and is shown in exports, so
+      # it gets the same cleaning as the text.
+      id: (Map.get(attrs, :id) || generate_id()) |> to_string() |> Text.safe(),
       platform: attrs |> Map.fetch!(:platform) |> to_atom(),
       client_id: to_string(Map.get(attrs, :client_id) || default_client_id()),
       # Everything a stranger wrote is cleaned once, here, on the way in.

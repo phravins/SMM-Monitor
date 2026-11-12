@@ -54,15 +54,19 @@ defmodule SmmMonitor.Persistence.DatabaseFile do
   def prepare(nil), do: :ok
 
   def prepare(path) do
-    with :ok <- File.mkdir_p(Path.dirname(path)),
+    # The database holds every collected mention and every client's
+    # alert settings (Slack webhook included), so it is owner-only. SQLite
+    # gives its -wal and -shm files the same mode as the database.
+    with :ok <- SmmMonitor.Paths.ensure_private_dir(Path.dirname(path), only_if_created: true),
          {:ok, conn} <- Exqlite.Sqlite3.open(path) do
       try do
         Exqlite.Sqlite3.execute(conn, "PRAGMA journal_mode=WAL")
         Exqlite.Sqlite3.execute(conn, "PRAGMA synchronous=NORMAL")
-        :ok
       after
         Exqlite.Sqlite3.close(conn)
       end
+
+      Enum.each([path, path <> "-wal", path <> "-shm"], &SmmMonitor.Paths.restrict_file/1)
     end
   rescue
     error -> {:error, error}

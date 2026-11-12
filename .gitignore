@@ -40,3 +40,18 @@ smm_monitor-*.tar
 
 # Self-contained binaries built by `mix release standalone`.
 /burrito_out/
+
+# Python bytecode from rendering PDF reports.
+__pycache__/
+*.pyc
+
+# Runtime data. These hold mentions, API keys and SSH keys, and are
+# created at run time - never commit one by accident.
+*.db
+*.db-wal
+*.db-shm
+/data/
+/reports/
+settings.json
+authorized_keys
+ssh_host_*

@@ -77,12 +77,25 @@ defmodule SmmMonitor.Reports.CSV do
       ~s("has ""quotes"", commas")
       iex> CSV.escape("two\\nlines")
       ~s("two\\nlines")
+      iex> CSV.escape("=1+1")
+      "'=1+1"
+      iex> CSV.escape("-0.300")
+      "-0.300"
+
+  ## Formula injection
+
+  A post's text is written by a stranger, and a spreadsheet treats a cell
+  starting with `=`, `+`, `-` or `@` (or a tab or carriage return before
+  one) as a formula: `=HYPERLINK(...)` becomes a link in the client's
+  copy of the report, and some spreadsheet apps go further. Such a cell
+  gets a leading apostrophe, which every spreadsheet reads as "this is
+  text". A plain number such as `-0.300` is left alone.
   """
   @spec escape(String.t() | nil) :: String.t()
   def escape(nil), do: ""
 
   def escape(value) do
-    value = to_string(value)
+    value = value |> to_string() |> defuse_formula()
 
     if String.contains?(value, [",", "\"", "\n", "\r"]) do
       ~s("#{String.replace(value, "\"", "\"\"")}")
@@ -92,6 +105,23 @@ defmodule SmmMonitor.Reports.CSV do
   end
 
   defp line(fields), do: Enum.map_join(fields, ",", &escape/1)
+
+  @formula_starts ["=", "+", "-", "@", "\t", "\r"]
+
+  defp defuse_formula(value) do
+    if String.starts_with?(value, @formula_starts) and not number?(value) do
+      "'" <> value
+    else
+      value
+    end
+  end
+
+  defp number?(value) do
+    case Float.parse(value) do
+      {_number, ""} -> true
+      _other -> false
+    end
+  end
 
   defp float(value) when is_float(value), do: :erlang.float_to_binary(value, decimals: 3)
   defp float(value), do: to_string(value)

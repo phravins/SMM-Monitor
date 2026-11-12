@@ -324,11 +324,23 @@ defmodule SmmMonitor.Client.AlertConfig do
   defp webhook_url(value) when is_binary(value) do
     case String.trim(value) do
       "" -> nil
-      url -> if String.starts_with?(url, "https://"), do: url, else: :invalid
+      url -> if https_url?(url), do: url, else: :invalid
     end
   end
 
   defp webhook_url(_value), do: :invalid
+
+  # "https://" alone, or "https://user@evil:x" style tricks, are not a
+  # webhook. A real one parses, is https, has a host and no userinfo.
+  defp https_url?(url) do
+    case URI.new(url) do
+      {:ok, %URI{scheme: "https", host: host, userinfo: nil}} when is_binary(host) and host != "" ->
+        not String.contains?(url, [" ", "\n", "\r", "\t"])
+
+      _other ->
+        false
+    end
+  end
 
   defp parse_float(nil), do: :error
   defp parse_float(value) when is_float(value), do: {:ok, value}

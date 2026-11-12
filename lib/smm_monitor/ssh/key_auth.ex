@@ -26,10 +26,15 @@ defmodule SmmMonitor.SSH.KeyAuth do
     file = authorized_keys_path(options)
 
     if AuthorizedKeys.authorized?(key, file) do
-      Logger.info("ssh: accepted key for user #{user}")
+      Logger.info("ssh: accepted key for user #{inspect(to_string(user))}")
       true
     else
-      Logger.warning("ssh: rejected connection for user #{user} — key not in #{file}")
+      # inspect/1: the username is whatever the client sent, and must not
+      # be able to forge a log line with a newline or escape codes.
+      Logger.warning(
+        "ssh: rejected connection for user #{inspect(to_string(user))} — key not authorised"
+      )
+
       false
     end
   end

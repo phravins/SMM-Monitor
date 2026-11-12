@@ -20,6 +20,8 @@ defmodule SmmMonitor.Setup.SettingsTest do
 
     credentials = Application.get_env(:smm_monitor, :credentials, [])
     mocks = Application.get_env(:smm_monitor, :mock_platforms, [])
+    env_credentials = Application.get_env(:smm_monitor, :env_credentials, [])
+    Application.put_env(:smm_monitor, :env_credentials, [])
 
     complete = Application.get_env(:smm_monitor, :setup_complete)
     Application.put_env(:smm_monitor, :setup_complete, false)
@@ -31,6 +33,7 @@ defmodule SmmMonitor.Setup.SettingsTest do
       File.rm(file)
       Application.put_env(:smm_monitor, :credentials, credentials)
       Application.put_env(:smm_monitor, :mock_platforms, mocks)
+      Application.put_env(:smm_monitor, :env_credentials, env_credentials)
     end)
 
     %{settings: file}
@@ -128,6 +131,11 @@ defmodule SmmMonitor.Setup.SettingsTest do
     end
 
     test "never overrides one that was set from the environment" do
+      Application.put_env(:smm_monitor, :env_credentials, [
+        {:reddit, :client_id},
+        {:reddit, :client_secret}
+      ])
+
       Application.put_env(:smm_monitor, :credentials,
         reddit: [client_id: "from-the-environment", client_secret: "env-secret"]
       )
@@ -136,6 +144,15 @@ defmodule SmmMonitor.Setup.SettingsTest do
 
       assert Application.get_env(:smm_monitor, :credentials)[:reddit][:client_id] ==
                "from-the-environment"
+    end
+
+    test "a corrected key replaces the one stored before" do
+      # Otherwise fixing a typo in the wizard did nothing until a restart.
+      Application.put_env(:smm_monitor, :credentials, youtube: [api_key: "typo"])
+
+      Settings.merge(%{youtube: %{api_key: "corrected"}})
+
+      assert Application.get_env(:smm_monitor, :credentials)[:youtube][:api_key] == "corrected"
     end
 
     test "takes a platform off demo data once it can actually poll" do
@@ -158,6 +175,36 @@ defmodule SmmMonitor.Setup.SettingsTest do
       Settings.merge(%{reddit: %{client_id: "abc"}})
 
       assert SmmMonitor.mock_platform?(:reddit)
+    end
+  end
+
+  describe "save/2 over an earlier run" do
+    test "keeps the keys of a platform skipped this time", %{settings: file} do
+      :ok = Settings.save(%{credentials: %{reddit: %{client_id: "id", client_secret: "secret"}}})
+      :ok = Settings.save(%{credentials: %{youtube: %{api_key: "yt"}}})
+
+      {:ok, %{credentials: credentials}} = Settings.load(file)
+
+      assert credentials.reddit.client_id == "id"
+      assert credentials.reddit.client_secret == "secret"
+      assert credentials.youtube.api_key == "yt"
+    end
+
+    test "a new answer replaces the old one", %{settings: file} do
+      :ok = Settings.save(%{credentials: %{youtube: %{api_key: "old"}}})
+      :ok = Settings.save(%{credentials: %{youtube: %{api_key: "new"}}})
+
+      {:ok, %{credentials: credentials}} = Settings.load(file)
+      assert credentials.youtube.api_key == "new"
+    end
+  end
+
+  describe "changed_platforms/2" do
+    test "names only the platforms whose keys changed" do
+      before = [reddit: [client_id: "a"], youtube: [api_key: "k"]]
+      after_ = [reddit: [client_id: "b"], youtube: [api_key: "k"]]
+
+      assert Settings.changed_platforms(before, after_) == [:reddit]
     end
   end
 

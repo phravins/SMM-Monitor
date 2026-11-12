@@ -40,7 +40,8 @@ defmodule SmmMonitor do
   Whether `platform` should serve fixture data instead of calling its API.
 
   `:mock_mode` is the global default; `:mock_platforms` overrides it per
-  platform, so one platform can go live while the rest stay on fixtures.
+  platform. Both are off unless demo data was asked for (`SMM_DEMO=1`, or
+  the setup wizard's demo option).
   An entry of `nil` (an unset environment variable) means "inherit the
   global setting" rather than "live".
   """
@@ -50,7 +51,7 @@ defmodule SmmMonitor do
     |> Application.get_env(:mock_platforms, [])
     |> Keyword.get(platform)
     |> case do
-      nil -> config(:mock_mode, true)
+      nil -> config(:mock_mode, false)
       value -> value
     end
   end

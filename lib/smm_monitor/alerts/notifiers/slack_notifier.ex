@@ -80,7 +80,7 @@ defmodule SmmMonitor.Alerts.Notifiers.SlackNotifier do
   @spec payload(Alert.t()) :: map()
   def payload(%Alert{} = alert) do
     %{
-      text: "#{icon(alert)} #{Alert.message(alert)}",
+      text: "#{icon(alert)} #{escape_mrkdwn(Alert.message(alert))}",
       blocks: blocks(alert),
       metadata: metadata(alert)
     }
@@ -92,7 +92,7 @@ defmodule SmmMonitor.Alerts.Notifiers.SlackNotifier do
     [
       %{
         type: "section",
-        text: %{type: "mrkdwn", text: "#{icon(alert)} *#{headline(alert)}*"}
+        text: %{type: "mrkdwn", text: "#{icon(alert)} *#{escape_mrkdwn(headline(alert))}*"}
       },
       %{type: "section", fields: fields(alert)}
     ] ++ context_block(alert)
@@ -110,7 +110,7 @@ defmodule SmmMonitor.Alerts.Notifiers.SlackNotifier do
     alert
     |> field_pairs()
     |> Enum.map(fn {label, value} ->
-      %{type: "mrkdwn", text: "*#{label}*\n#{value}"}
+      %{type: "mrkdwn", text: "*#{label}*\n#{escape_mrkdwn(value)}"}
     end)
   end
 
@@ -134,7 +134,7 @@ defmodule SmmMonitor.Alerts.Notifiers.SlackNotifier do
 
   defp field_pairs(%Alert{kind: :watch_phrase, subject: phrase, details: details} = alert) do
     [
-      {"Phrase", "`#{phrase}`"},
+      {"Phrase", "`#{String.replace(to_string(phrase), "`", "'")}`"},
       {"Mentions", to_string(details[:observed])},
       {"Window", Alert.window_label(alert.window_ms)}
     ]
@@ -147,9 +147,18 @@ defmodule SmmMonitor.Alerts.Notifiers.SlackNotifier do
   # The quoted mention for a phrase alert, and how long a resolved
   # incident ran — the two things a reader asks for that don't fit in a
   # field.
+  # The excerpt is a stranger's words, so it goes out as plain_text: Slack
+  # does not parse mentions, links or formatting in it. As mrkdwn, a post
+  # reading "<!channel>" or "<https://evil|Reset your password>" would
+  # have pinged the whole channel or shown a disguised link.
   defp context_block(%Alert{kind: :watch_phrase, details: %{excerpt: excerpt}})
        when is_binary(excerpt) and excerpt != "" do
-    [%{type: "context", elements: [%{type: "mrkdwn", text: "> #{excerpt}"}]}]
+    [
+      %{
+        type: "context",
+        elements: [%{type: "plain_text", text: "“" <> truncate(excerpt, 300) <> "”", emoji: false}]
+      }
+    ]
   end
 
   defp context_block(%Alert{state: :resolved} = alert) do
@@ -218,6 +227,27 @@ defmodule SmmMonitor.Alerts.Notifiers.SlackNotifier do
     end)
   catch
     :exit, _reason -> false
+  end
+
+  @doc """
+  Escapes the three characters Slack's mrkdwn treats as control
+  characters, so text from a client name, a watch phrase or a post
+  cannot become a mention (`<!channel>`), a user ping or a link.
+
+      iex> SmmMonitor.Alerts.Notifiers.SlackNotifier.escape_mrkdwn("<!channel> & <https://x|y>")
+      "&lt;!channel&gt; &amp; &lt;https://x|y&gt;"
+  """
+  @spec escape_mrkdwn(term()) :: String.t()
+  def escape_mrkdwn(value) do
+    value
+    |> to_string()
+    |> String.replace("&", "&amp;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
+  end
+
+  defp truncate(text, max) do
+    if String.length(text) > max, do: String.slice(text, 0, max - 1) <> "…", else: text
   end
 
   defp icon(%Alert{state: :resolved}), do: ":white_check_mark:"

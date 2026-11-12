@@ -12,6 +12,17 @@ runtime, so it is tied to the OS and CPU architecture it was built on.
 Build on the same Ubuntu release as the server (or on the server itself).
 An artifact built on Ubuntu 24.04 x86-64 will not run on Alpine or ARM.
 
+**Build with a patched Erlang/OTP.** The release bundles whatever OTP the
+build machine has. If you turn on SSH access (§5), that OTP must be
+27.3.3 or newer (or 26.2.5.11+ / 25.3.2.20+); older versions carry
+CVE-2025-32433, a pre-authentication remote code execution bug in
+Erlang's SSH server, and SMM Monitor refuses to start its SSH server on
+them. Check the build machine's full OTP version with:
+
+```sh
+erl -noshell -eval '{ok,V}=file:read_file(filename:join([code:root_dir(),"releases",erlang:system_info(otp_release),"OTP_VERSION"])),io:put_chars(V),halt().'
+```
+
 ---
 
 ## 1. Build the release
@@ -49,7 +60,7 @@ sudo apt-get install -y build-essential erlang-dev
 ```
 
 `ex_termbox` (the local TUI) also needs Python for its bundled build
-script; see the README if it fails on Python 3.11+.
+script; see [the README](README.md#2-from-source) if it fails on Python 3.11+.
 </details>
 
 ---
@@ -102,8 +113,11 @@ sudo editor /etc/smm-monitor/env
 not **rewrite** them, and no other user on the box can read them at all.
 
 Fill in the credentials you have. Every setting is optional — with an
-empty file the service starts in mock mode and shows fixture data, which
-is a fine way to confirm the deploy works before adding real keys.
+empty file the service starts, and each platform without credentials
+shows as **NOT CONNECTED** and collects nothing. It never invents
+mentions. To see the dashboard with sample data first, set `SMM_DEMO=1`
+(and remove it before going live). Every variable is described in
+[docs/configuration.md](docs/configuration.md).
 
 > **Quote any value containing a space or a bracket.** systemd strips the
 > quotes, and it keeps the file safe to `source` if you want to test a
@@ -137,15 +151,20 @@ A healthy first boot looks like this:
 ```
 [info] database: applied 1 migration(s)
 [info] ssh: generating a host key at /var/lib/smm-monitor/ssh/ssh_host_rsa_key (first boot)
-[info] ssh: dashboard available on port 2222 (0 authorised key(s))
-[warning] reddit is configured for live data but its credentials are missing or incomplete - falling back to mock data.
+[info] ssh: dashboard available on 127.0.0.1:2222 (0 authorised key(s))
+[warning] reddit: no credentials, so nothing is being collected from it. Add them with `c` then `S` in the dashboard (Reddit and YouTube), or set this platform's environment variables. Nothing will be invented in the meantime.
 ```
 
 Those warnings are the app telling you exactly what it is missing. Add
 the credentials and restart.
 
 > **`(0 authorised key(s))`** means nobody can connect to the dashboard
-> yet. That is the fail-closed default — see §5.
+> yet. That is the fail-closed default — see §5. The `ssh:` lines only
+> appear with `SMM_SSH_ENABLED=true`.
+>
+> If you see `ssh: refusing to start - this Erlang/OTP ships ssh ...`
+> instead, the release was built with an unpatched OTP. Everything else
+> keeps running; rebuild with OTP 27.3.3+ (see the top of this page).
 
 ---
 
@@ -202,7 +221,8 @@ sudo systemctl restart smm-monitor
 
 Secrets, ports and poll intervals are read at boot. **Clients, their
 brand terms and their subreddits are not** — add, edit and pause those
-live from the clients screen (`c`), no restart needed (see the README).
+live from the clients screen (`c`), no restart needed (see
+[docs/clients.md](docs/clients.md)).
 
 ### Upgrading to the multi-client version
 
@@ -253,8 +273,8 @@ sudo systemctl restart smm-monitor
 ```
 
 Any file present there wins; the rest are still read from the release,
-so you override one category without copying all seven. See the README
-for what each list does.
+so you override one category without copying all seven. See
+[docs/sentiment.md](docs/sentiment.md) for what each list does.
 
 ---
 
@@ -277,7 +297,8 @@ than silent. Things worth grepping for:
 | --- | --- |
 | `ALERT` | An alert fired: sentiment, volume or a watch phrase |
 | `RESOLVED` | An alert cleared, with how long it ran |
-| `falling back to mock data` | A platform is missing credentials |
+| `nothing is being collected` | A platform is missing credentials |
+| `refusing to start` | SSH is off because the bundled OTP is unpatched |
 | `quota budget spent` | YouTube stopped polling until midnight Pacific |
 | `rejected connection` | Someone tried to connect with an unauthorised key |
 | `could not store` | A database write failed |
@@ -289,7 +310,10 @@ separately, set `SystemMaxUse=` in `/etc/systemd/journald.conf`.
 
 ## 5. Giving the team dashboard access
 
-The service listens on port 2222 (`SMM_SSH_ENABLED=true`). It authorises
+SSH access is **off** unless `/etc/smm-monitor/env` has
+`SMM_SSH_ENABLED=true`. When on, the service listens on port 2222
+(`SMM_SSH_PORT`) on **127.0.0.1 only** (`SMM_SSH_BIND`), so nothing
+outside the server can reach it until you decide how. It authorises
 **nobody** until you add a key:
 
 ```sh
@@ -298,22 +322,49 @@ sudo tee -a /etc/smm-monitor/authorized_keys < alice.pub
 ```
 
 No restart needed — the file is re-read on every connection attempt.
-They connect with:
+Viewers get the dashboard, read-only: no shell, no commands, no file
+transfer (SFTP is disabled).
+
+### Reaching it from another machine
+
+Pick one:
+
+**An SSH tunnel (recommended, no config change).** Anyone who can
+already log in to the server over normal SSH runs:
 
 ```sh
-ssh -p 2222 viewer@your-server
+ssh -N -L 2222:127.0.0.1:2222 you@your-server     # leave running
+ssh -p 2222 viewer@127.0.0.1                       # in a second terminal
 ```
 
-> **Do not expose 2222 to the internet.** Bind it to a private network or
-> reach it over your VPN. The reasoning is in the README's security
-> section — the authentication is sound, but there is no rate limiting
-> and no audit trail beyond one line per connection.
-
-If the server is firewalled with `ufw`:
+**A private network or VPN address.** Bind to the server's address on
+that network, restart, and allow only that network:
 
 ```sh
+# /etc/smm-monitor/env
+SMM_SSH_BIND=10.0.0.5
+```
+
+```sh
+sudo systemctl restart smm-monitor
 sudo ufw allow from 10.0.0.0/8 to any port 2222 proto tcp
 ```
+
+Colleagues then connect with `ssh -p 2222 viewer@10.0.0.5`.
+
+`SMM_SSH_BIND=0.0.0.0` listens on every interface. Only use it behind a
+firewall that limits port 2222 to trusted addresses.
+
+> **Do not expose 2222 to the internet.** The authentication is sound,
+> but there is no rate limiting and no audit trail beyond one line per
+> connection. See [docs/ssh.md](docs/ssh.md) and
+> [docs/security.md](docs/security.md).
+
+> **Upgrading from a version where SSH listened on every interface?**
+> Remote viewers will stop reaching it until you choose one of the
+> options above. That version also left SFTP switched on, so any
+> authorised viewer could have read `/etc/smm-monitor/env`: rotate the
+> API keys and webhook URLs in it.
 
 ---
 
@@ -349,9 +400,19 @@ particular server, set `RELEASE_DISTRIBUTION=sname` and `RELEASE_NODE` in
 means the release was built on a different platform. Rebuild on a
 matching one.
 
-**The dashboard shows fixture data.** Look for `falling back to mock
-data` in the journal; it names the platform. Either the credentials are
-missing, or `SMM_MOCK_REDDIT` / `SMM_MOCK_YOUTUBE` is not `false`.
+**A platform shows NOT CONNECTED.** Look for `nothing is being
+collected` in the journal; it names the platform. Add its credentials to
+`/etc/smm-monitor/env` and restart.
+
+**The header says DEMO DATA.** `SMM_DEMO=1` (or the older
+`SMM_MOCK_MODE=true`) or one of `SMM_MOCK_REDDIT` / `SMM_MOCK_YOUTUBE` /
+`SMM_MOCK_TWITTER` / `SMM_MOCK_INSTAGRAM` is set in
+`/etc/smm-monitor/env`. Remove the line and restart; credentials alone
+make a platform live.
+
+**A platform shows `error` or `stale` in the footer.** The last polls
+failed. `journalctl -u smm-monitor -p warning -n 50` shows why, usually
+an expired token or a spent quota.
 
 ---
 
@@ -365,9 +426,13 @@ missing, or `SMM_MOCK_REDDIT` / `SMM_MOCK_YOUTUBE` is not `false`.
 | `/etc/smm-monitor/authorized_keys` | `root:smm-monitor` | Who may view the dashboard. |
 | `/etc/smm-monitor/config.json` | `smm-monitor` | Legacy single-brand config. Read once on upgrade to seed the first client, then never written again. |
 | `/etc/smm-monitor/sentiment/` | `root:smm-monitor` | Word lists overriding the packaged ones. Optional. |
-| `/var/lib/smm-monitor/mentions.db` | `smm-monitor` `0750` | Collected mentions. |
+| `/var/lib/smm-monitor/mentions.db` | `smm-monitor` `0600` | Collected mentions. |
 | `/var/lib/smm-monitor/ssh/` | `smm-monitor` | SSH host key. |
 | `/etc/systemd/system/smm-monitor.service` | `root` | The unit. |
 
 Nothing the app writes lives inside `/opt/smm-monitor/<version>/`, which
 is what makes a deploy a directory swap and a rollback a symlink swap.
+
+The unit sets `UMask=0077`, and the app creates its own directories
+`0700` and its files `0600`, so the database, reports and SSH host key
+are readable by the service user only.

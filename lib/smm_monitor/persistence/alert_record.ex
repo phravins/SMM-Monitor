@@ -94,14 +94,17 @@ defmodule SmmMonitor.Persistence.AlertRecord do
 
   # A hand-edited or future-version row must not crash a report with an
   # unknown atom — and neither must a perfectly ordinary one whose atom
-  # this VM has not happened to create yet.
-  defp safe_atom(nil), do: nil
+  # this VM has not happened to create yet. Atoms are never garbage
+  # collected, so a string from the database is never turned into a new
+  # one: known values come from this list, anything else is :unknown.
+  @known_atoms ~w(sentiment_drop volume_spike watch_phrase warning critical firing resolved
+                  observed threshold count negative baseline ratio days_observed excerpt
+                  mention mention_id severity kind phrase average_sentiment)a
+  @known_by_name Map.new(@known_atoms, &{Atom.to_string(&1), &1})
 
-  defp safe_atom(value) do
-    String.to_existing_atom(value)
-  rescue
-    ArgumentError -> String.to_atom(value)
-  end
+  defp safe_atom(nil), do: nil
+  defp safe_atom(value) when is_atom(value), do: value
+  defp safe_atom(value), do: Map.get(@known_by_name, to_string(value), :unknown)
 
   # The mention inside a phrase alert's details is a whole struct; only
   # its id is worth keeping, and :infinity has no JSON representation.
@@ -125,7 +128,9 @@ defmodule SmmMonitor.Persistence.AlertRecord do
   end
 
   defp atomize(map) do
-    Map.new(map, fn {key, value} -> {safe_atom(key) || key, value} end)
+    # Unknown keys stay strings rather than becoming :unknown and
+    # colliding with each other.
+    Map.new(map, fn {key, value} -> {Map.get(@known_by_name, key, key), value} end)
   end
 
   defp usec(%DateTime{} = at), do: DateTime.add(at, 0, :microsecond)

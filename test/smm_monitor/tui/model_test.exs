@@ -12,6 +12,8 @@ defmodule SmmMonitor.TUI.ModelTest do
   alias SmmMonitor.Monitor
   alias SmmMonitor.TUI.Model
 
+  doctest SmmMonitor.TUI.Model, only: [mask_webhook: 2, freshness: 2]
+
   setup do
     Monitor.reset()
     :ok

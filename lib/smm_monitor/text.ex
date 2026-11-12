@@ -35,7 +35,17 @@ defmodule SmmMonitor.Text do
     * Bidirectional overrides (U+202A-U+202E, U+2066-U+2069) and the
       direction marks. These reorder displayed text without changing it
       — the "Trojan Source" trick — so "refund" can be made to read
-      "dnufer" or a URL made to appear to point somewhere else.
+      "dnufer" or a URL made to appear to point somewhere else. The
+      Arabic letter mark (U+061C) is removed for the same reason.
+    * Invisible characters that hide text or split words to dodge a
+      match: zero width space (U+200B), word joiner (U+2060), the byte
+      order mark (U+FEFF) and the interlinear annotation marks
+      (U+FFF9-U+FFFB). Zero width joiner and non-joiner are kept: emoji
+      sequences and several scripts need them.
+    * Line and paragraph separators (U+2028, U+2029) become spaces, like
+      a newline.
+    * Runs of more than four combining marks on one character ("Zalgo"
+      text), which some terminals draw over the rows above and below.
 
   Everything else is kept, emoji and every script included: this is a
   social media tool and the content is the point.
@@ -73,6 +83,7 @@ defmodule SmmMonitor.Text do
     |> String.to_charlist()
     |> Enum.map(&replace/1)
     |> Enum.reject(&is_nil/1)
+    |> cap_combining()
     |> List.to_string()
     |> collapse_whitespace()
   end
@@ -96,8 +107,34 @@ defmodule SmmMonitor.Text do
   # Bidi overrides and isolates, and the direction marks.
   defp replace(char) when char in 0x202A..0x202E, do: nil
   defp replace(char) when char in 0x2066..0x2069, do: nil
-  defp replace(char) when char in [0x200E, 0x200F], do: nil
+  defp replace(char) when char in [0x200E, 0x200F, 0x061C], do: nil
+  # Invisible: zero width space, word joiner, BOM, annotation marks.
+  defp replace(char) when char in [0x200B, 0x2060, 0xFEFF], do: nil
+  defp replace(char) when char in 0xFFF9..0xFFFB, do: nil
+  # Line and paragraph separators break a row like a newline would.
+  defp replace(char) when char in [0x2028, 0x2029], do: ?\s
   defp replace(char), do: char
+
+  @max_combining 4
+
+  # Keep at most @max_combining combining marks after any one character.
+  defp cap_combining(chars) do
+    {kept, _run} =
+      Enum.reduce(chars, {[], 0}, fn char, {acc, run} ->
+        cond do
+          not combining?(char) -> {[char | acc], 0}
+          run < @max_combining -> {[char | acc], run + 1}
+          true -> {acc, run}
+        end
+      end)
+
+    Enum.reverse(kept)
+  end
+
+  defp combining?(char) do
+    char in 0x0300..0x036F or char in 0x1AB0..0x1AFF or char in 0x1DC0..0x1DFF or
+      char in 0x20D0..0x20FF or char in 0xFE20..0xFE2F
+  end
 
   defp sanitize_encoding(text) do
     if String.valid?(text) do

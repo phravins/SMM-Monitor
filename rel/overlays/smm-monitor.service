@@ -28,7 +28,8 @@ ExecStart=/opt/smm-monitor/current/bin/smm_monitor start
 # Secrets live here, not in this file — a unit file is world-readable and
 # ends up in git. The leading `-` means the service still starts if the
 # file is absent, which is what you want on a first install before any
-# credentials exist: it comes up in mock mode.
+# credentials exist: it comes up NOT CONNECTED and collects nothing until
+# keys are added (or SMM_DEMO=1 is set for demo data).
 EnvironmentFile=-/etc/smm-monitor/env
 
 # systemd creates, owns and passes these in; SmmMonitor.Paths reads them,
@@ -48,6 +49,10 @@ TimeoutStopSec=30s
 # --- Hardening --------------------------------------------------------
 # The app needs: outbound HTTPS, a listening port, and its own state
 # directory. Everything else can be taken away.
+
+# Everything the service creates - the database, reports, the SSH host
+# key - is readable by the service account only.
+UMask=0077
 NoNewPrivileges=yes
 PrivateTmp=yes
 PrivateDevices=yes
@@ -60,6 +65,20 @@ RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+# Other processes, and their command lines and environments, are hidden.
+ProtectProc=invisible
+RemoveIPC=yes
+SystemCallArchitectures=native
+# The set of system calls an ordinary service needs. A call outside it
+# fails with EPERM rather than killing the process, so an unexpected one
+# shows up as an error in the log instead of a crash loop.
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# Not set: MemoryDenyWriteExecute. The BEAM's JIT (OTP 24+) writes
+# machine code at run time, and the VM will not start with it.
 # The SSH dashboard binds 2222 by default. AF_UNIX is needed by the BEAM
 # itself; AF_INET/AF_INET6 for the platform APIs and the SSH listener.
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

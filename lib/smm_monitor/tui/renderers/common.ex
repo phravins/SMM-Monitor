@@ -759,7 +759,7 @@ defmodule SmmMonitor.TUI.Renderers.Common do
               text(content: "█", color: @accent)
             ]
           else
-            text(content: field_display(client, field), color: field_color(field))
+            text(content: field_display(model, client, field), color: field_color(field))
           end
         end
       end
@@ -788,6 +788,18 @@ defmodule SmmMonitor.TUI.Renderers.Common do
       defp config_title(%Model{read_only: true}), do: "clients · read-only from this session"
 
       defp config_title(_model), do: "clients · changes are picked up on the next poll"
+
+      # A webhook URL is a credential: whoever holds it can post to the
+      # channel. The screen never shows it whole, and a read-only SSH
+      # viewer only learns whether one is set.
+      defp field_display(model, client, :webhook_url = field) do
+        case Model.field_value(client, field) do
+          "" -> field_placeholder(field)
+          url -> Model.mask_webhook(url, model.read_only)
+        end
+      end
+
+      defp field_display(_model, client, field), do: field_display(client, field)
 
       # A bare "-0.30" says nothing about which direction trips it.
       defp field_display(client, :sentiment_threshold = field) do
@@ -820,8 +832,25 @@ defmodule SmmMonitor.TUI.Renderers.Common do
         label do
           text(content: "    #{String.pad_trailing(to_string(status.platform), 14)}", color: @muted)
           text(content: worker_state(status), color: mode_colour(status))
+
+          case Model.freshness(status, DateTime.utc_now()) do
+            %{state: :stale, age: age} ->
+              text(content: " · stale, last data #{age} ago", color: @accent, attributes: @bold)
+
+            %{state: :fresh, age: age, next: next} ->
+              text(content: " · #{age} ago#{next_poll_label(next)}", color: @muted)
+
+            %{state: :waiting, next: next} ->
+              text(content: " · waiting for the first poll#{next_poll_label(next)}", color: @muted)
+
+            nil ->
+              text(content: "")
+          end
         end
       end
+
+      defp next_poll_label(nil), do: ""
+      defp next_poll_label(next), do: " · next #{next}"
 
       defp mode_colour(%{mode: :live}), do: @positive
       defp mode_colour(%{mode: :down}), do: @negative
@@ -926,10 +955,20 @@ defmodule SmmMonitor.TUI.Renderers.Common do
         "recent mentions ·#{position}"
       end
 
+      # "reddit:live 12s" - the platform, its mode, and how old its
+      # newest data is. A worker whose polls have stopped landing says
+      # "stale" instead of "live", so a frozen feed never passes for a
+      # quiet one.
       defp worker_summary(model) do
+        now = DateTime.utc_now()
+
         model.statuses
         |> Enum.map_join(" ", fn status ->
-          "#{status.platform}:#{worker_state(status)}"
+          case Model.freshness(status, now) do
+            %{state: :stale, age: age} -> "#{status.platform}:stale #{age}"
+            %{state: :fresh, age: age} -> "#{status.platform}:#{worker_state(status)} #{age}"
+            _other -> "#{status.platform}:#{worker_state(status)}"
+          end
         end)
       end
 

@@ -43,6 +43,32 @@ defmodule SmmMonitor.Processing.ProcessorTest do
     end
   end
 
+  describe "ingest_fresh/2" do
+    test "drops a fetched post older than the retention window" do
+      old = DateTime.add(DateTime.utc_now(), -3, :day)
+      recent = DateTime.add(DateTime.utc_now(), -1, :hour)
+
+      assert {:ok, %{inserted: 1, stale: 1}} =
+               Processor.ingest_fresh([
+                 attrs(id: "old", timestamp: old),
+                 attrs(id: "recent", timestamp: recent)
+               ])
+
+      assert [%{id: "recent"}] = Store.recent(Processor.table(), :all)
+    end
+
+    test "an old post fetched again is not counted as new each time" do
+      old = DateTime.add(DateTime.utc_now(), -7, :day)
+
+      for _poll <- 1..3 do
+        assert {:ok, %{inserted: 0}} =
+                 Processor.ingest_fresh([attrs(id: "week-old", timestamp: old)])
+      end
+
+      assert Store.size(Processor.table()) == 0
+    end
+  end
+
   describe "totals/1" do
     test "counts lifetime ingests per platform" do
       Processor.ingest([

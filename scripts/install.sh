@@ -5,15 +5,22 @@
 #   curl -fsSL https://raw.githubusercontent.com/phravins/SMM-Monitor/main/scripts/install.sh | sh
 #
 # Works out which binary this machine needs, fetches it from the latest
-# release, and puts it somewhere on your PATH. No Elixir, no Erlang, no
-# build step — the binary carries its own runtime.
+# release, checks it against the release's SHA256SUMS, and puts it
+# somewhere on your PATH. No Elixir, no Erlang, no build step — the
+# binary carries its own runtime.
 #
 # Knobs, for the people who want them:
 #
 #   SMM_INSTALL_DIR=/usr/local/bin   where to install (default ~/.local/bin)
 #   SMM_VERSION=v0.2.0               a specific release (default: latest)
 #   SMM_ASSET_URL=https://...        download from somewhere else entirely
-#                                    (a mirror, or a binary you built)
+#                                    (a mirror, or a binary you built);
+#                                    must be https
+#   SMM_CHECKSUM=<sha256>            the expected SHA-256 of that binary.
+#                                    Without it a custom URL is installed
+#                                    unchecked, with a warning.
+#   SMM_SKIP_CHECKSUM=1              install a release published before
+#                                    releases carried SHA256SUMS
 #
 set -eu
 
@@ -58,17 +65,26 @@ detect_asset() {
 
 # --- fetch ------------------------------------------------------------------
 
+release_base() {
+  if [ -n "${SMM_VERSION:-}" ]; then
+    printf 'https://github.com/%s/releases/download/%s' "$REPO" "$SMM_VERSION"
+  else
+    # GitHub redirects this to whatever the newest release is, which
+    # saves parsing JSON in a shell script.
+    printf 'https://github.com/%s/releases/latest/download' "$REPO"
+  fi
+}
+
 download_url() {
   asset="$1"
 
   if [ -n "${SMM_ASSET_URL:-}" ]; then
-    printf '%s' "$SMM_ASSET_URL"
-  elif [ -n "${SMM_VERSION:-}" ]; then
-    printf 'https://github.com/%s/releases/download/%s/%s' "$REPO" "$SMM_VERSION" "$asset"
+    case "$SMM_ASSET_URL" in
+      https://*) printf '%s' "$SMM_ASSET_URL" ;;
+      *) die "SMM_ASSET_URL must be an https:// URL: a binary fetched over plain http can be swapped on the way." ;;
+    esac
   else
-    # GitHub redirects this to whatever the newest release is, which
-    # saves parsing JSON in a shell script.
-    printf 'https://github.com/%s/releases/latest/download/%s' "$REPO" "$asset"
+    printf '%s/%s' "$(release_base)" "$asset"
   fi
 }
 
@@ -77,14 +93,88 @@ fetch() {
   destination="$2"
 
   if command -v curl >/dev/null 2>&1; then
-    curl -fL --progress-bar -o "$destination" "$url" || return 1
+    # HTTPS only, redirects included: GitHub's release downloads are a
+    # chain of redirects, and none of them may drop to plain http.
+    curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+      --progress-bar -o "$destination" "$url" || return 1
   elif command -v wget >/dev/null 2>&1; then
     # No --show-progress: it is GNU wget only, and recent enough GNU
     # wget at that.
-    wget -O "$destination" "$url" || return 1
+    wget --https-only -O "$destination" "$url" || return 1
   else
     die "Need curl or wget to download anything, and found neither."
   fi
+}
+
+# --- check ------------------------------------------------------------------
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d ' ' -f 1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | cut -d ' ' -f 1
+  else
+    die "Need sha256sum or shasum to check the download, and found neither."
+  fi
+}
+
+# The SHA-256 the binary must have, or nothing if the check is skipped.
+expected_sha256() {
+  asset="$1"
+
+  if [ -n "${SMM_CHECKSUM:-}" ]; then
+    printf '%s' "$SMM_CHECKSUM"
+    return 0
+  fi
+
+  if [ -n "${SMM_ASSET_URL:-}" ] || [ "${SMM_SKIP_CHECKSUM:-}" = "1" ]; then
+    return 0
+  fi
+
+  sums="$(mktemp "${TMPDIR:-/tmp}/smm-sums.XXXXXX")"
+
+  if ! fetch "$(release_base)/SHA256SUMS" "$sums" >/dev/null 2>&1; then
+    rm -f "$sums"
+    die "$(cat <<MESSAGE
+Couldn't download SHA256SUMS for this release, so the binary can't be
+checked. Releases published before checksums were added don't have one;
+to install such a release anyway, run again with SMM_SKIP_CHECKSUM=1.
+MESSAGE
+)"
+  fi
+
+  line="$(grep " $asset\$" "$sums" | head -n 1 || true)"
+  rm -f "$sums"
+
+  [ -n "$line" ] || die "SHA256SUMS has no entry for $asset."
+  printf '%s' "${line%% *}"
+}
+
+verify() {
+  file="$1"
+  expected="$2"
+
+  if [ -z "$expected" ]; then
+    warn "Not checking the download's SHA-256 (custom URL or SMM_SKIP_CHECKSUM)."
+    return 0
+  fi
+
+  actual="$(sha256_of "$file")"
+
+  if [ "$actual" != "$expected" ]; then
+    die "$(cat <<MESSAGE
+The download does not match its published checksum, so it has not been
+installed.
+
+    expected $expected
+    got      $actual
+
+Try again; if it keeps happening, do not run the file and open an issue.
+MESSAGE
+)"
+  fi
+
+  step "Checksum verified"
 }
 
 # --- clear any stale unpacked copy ------------------------------------------
@@ -182,6 +272,8 @@ MESSAGE
   # concerned on some versions, so check we got something binary-sized.
   size="$(wc -c < "$temporary" | tr -d ' ')"
   [ "$size" -gt 1000000 ] || die "That download looks wrong ($size bytes). Check that $asset exists on the release page."
+
+  verify "$temporary" "$(expected_sha256 "$asset")"
 
   mkdir -p "$INSTALL_DIR" || die "Could not create $INSTALL_DIR"
 
