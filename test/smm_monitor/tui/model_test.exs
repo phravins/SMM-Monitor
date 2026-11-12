@@ -434,6 +434,58 @@ defmodule SmmMonitor.TUI.ModelTest do
     end
   end
 
+  describe "Threads' tab" do
+    setup do
+      saved =
+        for key <- [:credentials, :mock_platforms],
+            do: {key, Application.get_env(:smm_monitor, key)}
+
+      # No token: not connected, so no tab until demo data is asked for.
+      Application.put_env(:smm_monitor, :credentials, [])
+      Application.put_env(:smm_monitor, :mock_platforms, threads: false)
+      owner = Ecto.Adapters.SQL.Sandbox.start_owner!(SmmMonitor.Repo, shared: true)
+
+      on_exit(fn ->
+        Ecto.Adapters.SQL.Sandbox.stop_owner(owner)
+        Enum.each(saved, fn {key, value} -> restore_env(key, value) end)
+      end)
+
+      start_supervised!(
+        {SmmMonitor.Fetchers.Worker, module: SmmMonitor.Fetchers.Threads, interval_ms: 3_600_000}
+      )
+
+      SmmMonitor.Fetchers.Worker.poll_now(:threads)
+      :ok
+    end
+
+    test "is hidden, and e does nothing, without an access token" do
+      model = Model.refresh(Model.new())
+
+      refute :threads in model.tabs
+      assert Model.handle_key(model, {:char, ?e}).tab == :all
+    end
+
+    test "is selected with e once it is showing data" do
+      Application.put_env(:smm_monitor, :mock_platforms, threads: true)
+      SmmMonitor.Fetchers.Worker.poll_now(:threads)
+
+      model = Model.refresh(Model.new())
+      assert :threads in model.tabs
+      assert Model.handle_key(model, {:char, ?e}).tab == :threads
+    end
+
+    test "e on the config screen still edits a client rather than opening Threads" do
+      Application.put_env(:smm_monitor, :mock_platforms, threads: true)
+      SmmMonitor.Fetchers.Worker.poll_now(:threads)
+
+      model = Model.refresh(Model.new()) |> Model.handle_key({:char, ?c})
+      edited = Model.handle_key(model, {:char, ?e})
+
+      assert edited.tab == :config
+      assert edited.editing != nil
+    end
+  end
+
   defp restore_env(key, nil), do: Application.delete_env(:smm_monitor, key)
   defp restore_env(key, value), do: Application.put_env(:smm_monitor, key, value)
 end

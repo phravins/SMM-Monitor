@@ -2,7 +2,7 @@
 
 [← Back to the README](../README.md)
 
-SMM Monitor collects from six platforms. Five are switched on by
+SMM Monitor collects from seven platforms. Six are switched on by
 giving them credentials; Bluesky needs no account and is switched on
 with one setting. **A platform that is switched on collects live data;
 one that is not collects nothing** and shows as not connected. Nothing
@@ -16,6 +16,7 @@ is invented unless you ask for demo data with `SMM_DEMO=1`.
 | **Instagram** | Business account | Environment | Only your own account's surroundings — [see below](#what-instagram-monitoring-can-and-cannot-see) |
 | **Bluesky** | Free, no account | Environment (`SMM_BLUESKY_ENABLED=true`) | Every new public post that names your brand, within a second or two — [see below](#bluesky) |
 | **Discord** | Free | Environment (`DISCORD_BOT_TOKEN`) | Messages that name your brand, in the servers you invite the bot to — [see below](#discord) |
+| **Threads** | Free, with a Meta app | Environment (`THREADS_ACCESS_TOKEN`) | Recent public posts naming your brand, and mentions of your account — **after Meta's App Review**; before it, only your own posts — [see below](#threads) |
 
 **Start with Reddit.** It is free, it takes about three minutes, and it
 behaves most like what people expect the whole app to do.
@@ -692,9 +693,157 @@ message-content events. After a restart, one
 per channel that had messages before. Nothing about your clients or brand
 terms is sent to Discord: matching happens on your machine.
 
+## Threads
+
+Threads is Meta's, and it works much like Instagram: a Meta app, a user
+token, and polling every 5 minutes. Unlike Instagram, it has a real
+**keyword search**: one query per brand term per poll, for posts since
+the last poll.
+
+### Read this before trusting the Threads tab
+
+**Until Meta approves your app in App Review, keyword search only finds
+posts by the connected account itself.** Meta's words: "If your app has
+not been approved for `threads_keyword_search`, the search will be
+performed only on posts owned by the authenticated user." Mentions work
+the same way: until `threads_manage_mentions` is approved, only posts by
+people with a role on your app come back.
+
+So a freshly connected Threads tab is a working pipe with almost nothing
+in it. That is the correct answer, not a fault. To see what the public is
+saying, submit the app for App Review with `threads_keyword_search` and
+`threads_manage_mentions` and publish it. Nothing in SMM Monitor changes
+when Meta approves it: the same requests start returning more.
+
+To check the pipe works before then, post something from the connected
+account that names one of your brand terms; it shows up within one poll.
+
+### Getting a Threads access token
+
+1. Create an app at <https://developers.facebook.com/apps> and pick the
+   **Access the Threads API** use case. The app gets two ids; use the
+   **Threads app ID** and **Threads app secret** (left menu → Settings),
+   not the other pair.
+2. Under **Use cases → Customize**, add the permissions
+   `threads_keyword_search` and `threads_manage_mentions` (`threads_basic`
+   is always on). Add `threads_read_replies` too if you will turn on the
+   replies source.
+3. In the same settings, add a **redirect callback URL** under Client
+   OAuth Settings. It only has to be an `https` address you can see in
+   the browser bar afterwards, for example `https://localhost/`.
+4. Add the Threads account you want to connect as a tester: **App roles →
+   Roles → Add People → Threads Tester**. Then, signed in as that account,
+   accept the invite at <https://www.threads.com/settings/account> under
+   **Website permissions**.
+5. Signed in as that account, open this address in a browser (one line,
+   with your app id and redirect URL filled in):
+
+   ```text
+   https://threads.com/oauth/authorize?client_id=<THREADS_APP_ID>&redirect_uri=https://localhost/&scope=threads_basic,threads_keyword_search,threads_manage_mentions&response_type=code
+   ```
+
+   Approve it. The browser lands on your redirect URL with `?code=…` on
+   the end. Copy the code (leave off a trailing `#_` if there is one). It
+   works once, for an hour.
+6. Swap the code for a short-lived token, then that for a 60-day one:
+
+   ```bash
+   curl -s -X POST https://graph.threads.net/oauth/access_token \
+     -F client_id=<THREADS_APP_ID> \
+     -F client_secret=<THREADS_APP_SECRET> \
+     -F grant_type=authorization_code \
+     -F redirect_uri=https://localhost/ \
+     -F code=<CODE>
+
+   curl -s "https://graph.threads.net/access_token\
+   ?grant_type=th_exchange_token\
+   &client_secret=<THREADS_APP_SECRET>\
+   &access_token=<SHORT_LIVED_TOKEN>"
+   ```
+
+   The second answer's `access_token` is the one you want.
+
+```bash
+export THREADS_ACCESS_TOKEN='THAA...'
+```
+
+Restart, and a **Threads** tab appears (or press `e`, for thr**e**ads).
+The footer shows `threads:live`.
+
+### The token renews itself
+
+A long-lived Threads token lasts 60 days, and Meta swaps it for a fresh
+60-day one on request once it is a day old. SMM Monitor does that for you:
+a day after it first uses a token, and then once a week. The renewed token
+is kept in `threads_token.json`, next to the database, readable only by
+you (`0600`). The token you put in `THREADS_ACCESS_TOKEN` is never written
+to disk; the file only keeps a hash of it, to notice when you paste a
+different one, in which case yours wins.
+
+So you never need to touch it again, **as long as the app runs at least
+once in any 60-day stretch**. If renewals keep failing, a warning is logged
+every hour during the last week. Once it has expired, the log says
+`expired_access_token` and you need a new one from step 5.
+
+### What Threads gets asked
+
+Per poll and per client:
+
+| Source | Request | Counts against search budget |
+| --- | --- | --- |
+| `search` *(default)* | `GET /keyword_search?q=<term>&search_type=RECENT&since=…`, one per brand term (at most 10) | Yes |
+| `mentions` *(default)* | `GET /{account-id}/mentions?since=…` | No |
+| `replies` *(opt-in)* | `GET /{account-id}/threads`, then `GET /{post-id}/replies` for each of the last 10 posts with replies | No |
+
+Plus one `GET /me` the first time mentions or replies are read, and the occasional
+`GET /refresh_access_token`. Everything goes to `graph.threads.net` over
+HTTPS. The first poll looks back a day; after that each one asks for what
+is new since the newest post seen, with a 10-minute overlap so a post Meta
+indexes late is not missed. Repeats are stored once.
+
+The mentions feed belongs to your account, not to any one client, so a
+mention is stored for a client **only if it names one of that client's
+brand terms**. A mention that names none of them is not stored. Replies to
+your own posts go to every client, like comments on Instagram.
+
+```bash
+# Which sources to read (default: search,mentions):
+export SMM_THREADS_SOURCES=search,mentions,replies
+```
+
+### The search budget
+
+Meta allows **2,200 keyword searches per rolling 24 hours per Threads
+account**, shared with every other app that account has authorised.
+SMM Monitor counts its own and stops at 2,000 by default
+(`SMM_THREADS_DAILY_QUERY_BUDGET`, up to 2200), leaving room for others.
+When it is spent, search pauses until the oldest search in the window is a
+day old; mentions carry on.
+
+One search is one brand term for one client for one poll, so the sum to
+check is *clients × brand terms × polls a day*:
+
+| Poll interval | Polls a day | Brand terms (across all clients) a 2,000 budget covers |
+| --- | --- | --- |
+| 5 min *(default)* | 288 | 6 |
+| 15 min | 96 | 20 |
+| 30 min | 48 | 41 |
+| 60 min | 24 | 83 |
+
+If yours does not fit, the log says so at the first poll and suggests an
+interval (`SMM_THREADS_POLL_INTERVAL_MS`). Meta's own limit still stands
+behind this count, which starts again from zero when the app restarts.
+
+### What it skips
+
+- **Private profiles**: Meta never returns their posts.
+- **Sensitive keywords**: Meta returns nothing for some terms.
+- **Edits and deletions** after a post is stored.
+- Posts older than a day when first connected.
+
 ## What each platform actually gives you
 
-All six platforms run on live APIs. What differs is **how much of the platform each
+All seven platforms run on live APIs. What differs is **how much of the platform each
 one can see**, which matters more than whether the code is written:
 
 | Platform | Coverage | How it works |
@@ -705,6 +854,7 @@ one can see**, which matters more than whether the code is written:
 | **Instagram** | **Not brand-wide.** Only posts that tag your account, comments on your own posts, and (opt-in) public posts carrying a tracked hashtag. | Graph API, scoped to one Business account. The Graph API has no keyword search at any tier — see [What Instagram monitoring can and cannot see](#what-instagram-monitoring-can-and-cannot-see). |
 | **Bluesky** | **Everything new, as it is posted.** Every public post from the moment of connecting (and up to an hour back after downtime). No search of older posts. | Jetstream WebSocket, matched locally against brand terms. No account. Off by default because of the steady bandwidth. |
 | **Discord** | **Only servers the bot is invited to.** Every new message there, as it is sent (and what was missed during downtime, in channels seen before). No search of other servers. | Gateway WebSocket as a bot, matched locally against brand terms. Needs Message Content Intent. |
+| **Threads** | **Platform-wide search of recent posts, once Meta approves the app.** Before App Review, only your own account's posts. Plus mentions of your account. No private profiles. | Threads API `/keyword_search` and `/mentions`, polled every 5 minutes with a long-lived user token the app renews itself. 2,200 searches a day, shared with other apps. |
 
 Every platform independently collects nothing when its credentials are
 missing, and says so in the log. So a half-configured install shows real
@@ -713,8 +863,8 @@ never next to invented Instagram data, which would look exactly like the
 real thing. `SMM_DEMO=1` serves fixtures everywhere when that is what
 you actually want.
 
-**Coverage is uneven, on purpose.** Reddit, YouTube, X and Bluesky
-answer "who mentioned us anywhere?"; Instagram answers "who tagged us, and what did
+**Coverage is uneven, on purpose.** Reddit, YouTube, X, Bluesky and
+(after App Review) Threads answer "who mentioned us anywhere?"; Instagram answers "who tagged us, and what did
 people say on our own posts?"; Discord answers "what are people saying in
 the communities we are part of?". A quiet Instagram or Discord tab does
 not mean nobody is talking about the brand there.

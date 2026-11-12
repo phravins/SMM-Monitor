@@ -1,0 +1,20 @@
+{
+  "data": [
+    {
+      "id": "18061234500000001",
+      "text": "@studio.hq the new Acme export is exactly what we needed",
+      "media_type": "TEXT_POST",
+      "permalink": "https://www.threads.com/@priya_writes/post/DBb2Aa1Bb2C",
+      "timestamp": "2026-11-12T10:15:30+0000",
+      "username": "priya_writes"
+    },
+    {
+      "id": "18061234500000002",
+      "text": "@studio.hq @othercorp who wants to grab lunch at the conference?",
+      "media_type": "TEXT_POST",
+      "permalink": "https://www.threads.com/@tom.from.sales/post/DBb2Cc3Dd4E",
+      "timestamp": "2026-11-12T10:02:00+0000",
+      "username": "tom.from.sales"
+    }
+  ]
+}

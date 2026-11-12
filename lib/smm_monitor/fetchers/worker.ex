@@ -367,14 +367,24 @@ defmodule SmmMonitor.Fetchers.Worker do
   defp warn_missing_credentials(%State{credentials_warned: true} = state), do: state
 
   defp warn_missing_credentials(state) do
-    Logger.warning(
+    message =
       "#{state.platform}: no credentials, so nothing is being collected from it. " <>
         "Add them with `c` then `S` in the dashboard (Reddit and YouTube), or set " <>
         "this platform's environment variables. Nothing will be invented in the " <>
         "meantime."
-    )
+
+    # A platform that is off until somebody sets it up (`tab: :when_on`,
+    # such as Threads) has nothing to warn about while it is off.
+    if opt_in?(state.platform), do: Logger.debug(message), else: Logger.warning(message)
 
     %{state | credentials_warned: true}
+  end
+
+  defp opt_in?(platform) do
+    :smm_monitor
+    |> Application.get_env(:platforms, [])
+    |> Keyword.get(platform, [])
+    |> Keyword.get(:tab) == :when_on
   end
 
   # Collecting nothing is a successful poll, not an error: there is no

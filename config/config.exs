@@ -74,6 +74,17 @@ config :smm_monitor, :platforms,
     interval_ms: :timer.minutes(15),
     opts: []
   ],
+  # Polled: Threads has no stream. Each poll searches every brand term,
+  # against Meta's 2,200 searches a day. Every 5 minutes fits about
+  # seven terms across all clients; see docs/platforms.md#threads.
+  # Its tab appears once THREADS_ACCESS_TOKEN is set.
+  threads: [
+    module: SmmMonitor.Fetchers.Threads,
+    enabled: true,
+    tab: :when_on,
+    interval_ms: :timer.minutes(5),
+    opts: []
+  ],
   # Not polled: one WebSocket that receives every new Bluesky post as it
   # is written. Collects nothing until SMM_BLUESKY_ENABLED=true.
   # Its tab appears once it is switched on (`tab: :when_on`).

@@ -272,7 +272,8 @@ defmodule SmmMonitor.Setup.Settings do
 
   defp configured_by_environment? do
     Enum.any?(
-      ~w(REDDIT_CLIENT_ID YOUTUBE_API_KEY TWITTER_BEARER_TOKEN INSTAGRAM_ACCESS_TOKEN),
+      ~w(REDDIT_CLIENT_ID YOUTUBE_API_KEY TWITTER_BEARER_TOKEN INSTAGRAM_ACCESS_TOKEN
+         THREADS_ACCESS_TOKEN),
       &(not blank?(System.get_env(&1)))
     )
   end

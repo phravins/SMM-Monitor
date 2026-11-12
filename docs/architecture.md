@@ -8,7 +8,8 @@ the tests. For running it as a service, see [DEPLOY.md](../DEPLOY.md).
 ## Data flow
 
 ```
- Reddit · YouTube · X · Instagram     Bluesky (Jetstream) · Discord (Gateway)
+ Reddit · YouTube · X ·               Bluesky (Jetstream) ·
+   Instagram · Threads                    Discord (Gateway)
         (HTTPS APIs, polled)               (WebSocket, pushed)
               │                                    │
               ▼                                    ▼
@@ -48,6 +49,7 @@ SmmMonitor.Supervisor                    (one_for_one)
 │   ├── PlatformSupervisor(:youtube)   → Worker(:youtube)
 │   ├── PlatformSupervisor(:twitter)   → Worker(:twitter)
 │   ├── PlatformSupervisor(:instagram) → Worker(:instagram)
+│   ├── PlatformSupervisor(:threads)   → Worker(:threads)
 │   ├── PlatformSupervisor(:bluesky)   → StreamWorker(:bluesky)
 │   └── PlatformSupervisor(:discord)   → StreamWorker(:discord)
 └── Ratatouille.Runtime.Supervisor       only when the TUI is enabled
@@ -303,10 +305,10 @@ supervisor needs editing. Add credentials to `config/runtime.exs` and
 `.env.example` if the platform needs them.
 
 The one place that isn't automatic: `TUI.Model`'s tab shortcuts are a fixed
-map (`a`/`t`/`i`/`r`/`y`/`b`/`d`) — pick a free letter and add it there.
-A letter the config screen already uses (`d` removes a client there)
-needs that screen's clauses placed above the tab-key clause in
-`handle_key`, as `d` and `h` are.
+map (`a`/`t`/`i`/`r`/`y`/`b`/`d`/`e`) — pick a free letter and add it there.
+A letter the config screen already uses (`d` removes a client there, `e`
+edits one) needs that screen's clauses placed above the tab-key clause in
+`handle_key`, as `d`, `e` and `h` are.
 Add `tab: :when_on` to the config entry if the platform is off by
 default, so its tab only appears once it is switched on.
 
@@ -423,6 +425,14 @@ terminal.
   close codes), and its catch-up requests go through
   `test/support/discord_stub.ex`, where a test's handler answers each
   request (by channel, say) and can return rate-limit headers.
+
+* Threads uses `test/fixtures/threads_search.json` and
+  `threads_mentions.json` for parsing, and `test/support/threads_stub.ex`
+  for the fetch path and token renewal: responses are scripted by URL
+  fragment (`/keyword_search`, `/mentions`, `/refresh_access_token`), and
+  a `clock` setting fixes the time, so the 24-hour and 7-day renewal rules
+  are tested without waiting. Instagram and Threads read Meta's error
+  codes through one module, `SmmMonitor.Fetchers.MetaGraph`.
 
 Tests run with `start_fetchers: false` and `start_tui: false`, so they get
 the processing layer and nothing else: no 30s polls racing assertions.
@@ -599,7 +609,8 @@ Compile-time defaults live in `config/config.exs`:
 | `SmmMonitor.Fetchers.Instagram` | see above | Which sources to poll, hashtags, page sizes |
 | `SmmMonitor.Fetchers.Bluesky` | see below | Switch, Jetstream server, cursor file |
 | `SmmMonitor.Fetchers.Discord` | see below | Server and channel allow-lists, cursor file |
-| `:platforms` | six entries | Platform → module, `kind` (`:poll` or `:stream`), enabled flag, `tab: :when_on`, opts |
+| `SmmMonitor.Fetchers.Threads` | see below | Sources, search budget, token file |
+| `:platforms` | seven entries | Platform → module, `kind` (`:poll` or `:stream`), enabled flag, `tab: :when_on`, opts |
 
 Reddit has its own block, since these are deployment choices rather than
 app-wide ones:
@@ -642,6 +653,18 @@ config :smm_monitor, SmmMonitor.Fetchers.Discord,
   # cursor_file: "/path",  # unset = discord.cursor next to the database;
                            # nil = don't save, no catch-up after a restart
   # gateway_url: "ws://127.0.0.1:4000/"  # tests only
+```
+
+And Threads (the token is a credential, `THREADS_ACCESS_TOKEN`):
+
+```elixir
+config :smm_monitor, SmmMonitor.Fetchers.Threads,
+  sources: [:search, :mentions],  # SMM_THREADS_SOURCES; :replies is opt-in
+  daily_query_budget: 2_000,      # SMM_THREADS_DAILY_QUERY_BUDGET; Meta's cap is 2,200
+  search_limit: 50,               # posts per search; Meta caps it at 100
+  max_terms: 10                   # brand terms searched per client per poll
+  # token_file: "/path",          # unset = threads_token.json next to the database;
+                                  # nil = keep renewals in memory only
 ```
 
 A platform may also set its own `:interval_ms` in the `:platforms` config;

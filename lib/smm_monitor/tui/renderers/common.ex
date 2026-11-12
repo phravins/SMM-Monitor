@@ -281,6 +281,14 @@ defmodule SmmMonitor.TUI.Renderers.Common do
               [text(content: "d", color: @accent, attributes: @bold), text(content: "iscord ")]
             end
 
+            if :threads in model.tabs do
+              [
+                text(content: "thr"),
+                text(content: "e", color: @accent, attributes: @bold),
+                text(content: "ads ")
+              ]
+            end
+
             text(content: "←/→", color: @accent, attributes: @bold)
             text(content: " · ")
             text(content: "c", color: @accent, attributes: @bold)
@@ -641,7 +649,7 @@ defmodule SmmMonitor.TUI.Renderers.Common do
 
           label do
             text(
-              content: "  twitter, instagram: set their env vars, then restart",
+              content: "  twitter, instagram, threads: set their env vars, then restart",
               color: @muted
             )
           end

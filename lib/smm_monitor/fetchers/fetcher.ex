@@ -25,6 +25,8 @@ defmodule SmmMonitor.Fetchers.Fetcher do
       15-minute request window and a monthly post cap.
     * Instagram carries Meta's throttle reading and the hashtag ids it
       has resolved.
+    * Threads carries its access token (renewed in the background), how
+      far each client has read, and a rolling count of keyword searches.
 
   The state lives in the worker's GenServer state, which means a
   crashing platform starts again clean and cannot corrupt anyone else's.

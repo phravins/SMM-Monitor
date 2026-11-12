@@ -49,6 +49,7 @@ connected. Walkthroughs for getting each one are in
 | `INSTAGRAM_ACCESS_TOKEN` | Instagram | Long-lived token; expires after 60 days |
 | `INSTAGRAM_BUSINESS_ACCOUNT_ID` | Instagram | The 17-digit account id. `INSTAGRAM_USER_ID` is accepted as an older name |
 | `DISCORD_BOT_TOKEN` | Discord | The bot's token from the Developer Portal. Environment only |
+| `THREADS_ACCESS_TOKEN` | Threads | A long-lived Threads user token. Renewed automatically and kept in `threads_token.json` (see [Storage](#storage)). Environment only |
 
 Bluesky needs no credentials. It is switched on with a setting, because
 its stream uses bandwidth around the clock
@@ -86,6 +87,9 @@ the app at start-up with the setting's name.
 | `SMM_INSTAGRAM_POLL_INTERVAL_MS` | `900000` (15 min) | Instagram's interval |
 | `SMM_INSTAGRAM_SOURCES` | `tags,comments` | Any of `tags`, `comments`, `hashtag` |
 | `SMM_INSTAGRAM_HASHTAGS` | the brand terms | Hashtags to search when `hashtag` is on. Meta allows 30 unique per week |
+| `SMM_THREADS_POLL_INTERVAL_MS` | `300000` (5 min) | Threads' interval |
+| `SMM_THREADS_SOURCES` | `search,mentions` | Any of `search`, `mentions`, `replies`. Anything else stops the app at start-up |
+| `SMM_THREADS_DAILY_QUERY_BUDGET` | `2000` | Keyword searches per rolling 24 hours before search pauses. `1` to `2200`, Meta's limit, which other apps on the same account share |
 | `SMM_MAX_MENTIONS` | `2000` | Most mentions held in memory for the dashboard |
 
 The budgets are shared by every client, because they belong to the API
@@ -115,6 +119,12 @@ directory as the database, so a restart carries on where it left off.
 Discord's is `discord.cursor`: the last message id seen in each channel
 (up to 500 channels), used to fetch what was missed after a restart. Both
 are `0600` and safe to delete; the next run then starts from now.
+
+Threads keeps `threads_token.json` there too (`0600`): the renewed access
+token, when it expires, and a SHA-256 hash of `THREADS_ACCESS_TOKEN` (never
+the token itself) so a newly pasted token replaces it. Deleting it is
+safe while the token in the environment is still valid; the app goes back
+to that one.
 
 `~/.config` and `~/.local/share` follow `XDG_CONFIG_HOME` and
 `XDG_DATA_HOME` when they are set. Under systemd, the defaults are
@@ -173,7 +183,7 @@ SSH needs a patched Erlang/OTP runtime. See [ssh.md](ssh.md).
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SMM_DEMO` | unset | Set to `1` to show invented sample mentions everywhere. The header then says `DEMO DATA`. `SMM_MOCK_MODE=true` is the older spelling |
-| `SMM_MOCK_REDDIT`, `SMM_MOCK_YOUTUBE`, `SMM_MOCK_TWITTER`, `SMM_MOCK_INSTAGRAM`, `SMM_MOCK_BLUESKY`, `SMM_MOCK_DISCORD` | unset | `true` forces demo data on that one platform, even with credentials. You never need `false`: credentials alone make a platform live |
+| `SMM_MOCK_REDDIT`, `SMM_MOCK_YOUTUBE`, `SMM_MOCK_TWITTER`, `SMM_MOCK_INSTAGRAM`, `SMM_MOCK_BLUESKY`, `SMM_MOCK_DISCORD`, `SMM_MOCK_THREADS` | unset | `true` forces demo data on that one platform, even with credentials. You never need `false`: credentials alone make a platform live |
 | `SMM_TUI` | on in the downloaded binary, off otherwise | `1` draws the dashboard in this terminal (`SMM_TUI=1 mix run --no-halt`, or a release started with `bin/smm_monitor start`). `0` runs headless: collecting, alerting and serving SSH only |
 
 Application config keys (for `config/*.exs`) are listed in
