@@ -22,12 +22,12 @@ defmodule SmmMonitor.Fetchers.Reddit do
         subreddits: ["smallbusiness", "marketing"],
         limit: 50,
         sort: "new",
-        time_filter: "week"
+        time_filter: "day"
 
-  Credentials come from the environment via `config/runtime.exs`:
-  `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` and optionally
-  `REDDIT_USER_AGENT`. Without them the worker keeps this platform on mock
-  data and logs why.
+  Credentials come from the setup wizard or the environment via
+  `config/runtime.exs`: `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` and
+  optionally `REDDIT_USER_AGENT`. Without them the worker collects nothing
+  and the dashboard shows Reddit as not connected.
   """
 
   use SmmMonitor.Fetchers.Fetcher, platform: :reddit, display_name: "Reddit"
@@ -40,7 +40,7 @@ defmodule SmmMonitor.Fetchers.Reddit do
   @search_host "https://oauth.reddit.com"
   @default_limit 50
   @default_sort "new"
-  @default_time_filter "week"
+  @default_time_filter "day"
 
   # Reddit caps a listing at 100 items per request.
   @max_limit 100
@@ -277,11 +277,13 @@ defmodule SmmMonitor.Fetchers.Reddit do
     |> String.slice(0, 500)
   end
 
-  defp permalink(%{"permalink" => permalink}) when is_binary(permalink) do
+  # Always a reddit.com link built from the permalink. A link post's own
+  # "url" field points wherever its author chose, so it is never used: a
+  # mention's link must go to the discussion, not to a stranger's site.
+  defp permalink(%{"permalink" => "/" <> _ = permalink}) do
     "https://reddit.com" <> permalink
   end
 
-  defp permalink(%{"url" => url}) when is_binary(url), do: url
   defp permalink(_post), do: nil
 
   # created_utc is unix seconds, and arrives as a float.

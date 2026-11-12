@@ -61,8 +61,9 @@ defmodule SmmMonitor.Reports.Writer do
   end
 
   defp write_one(report, :csv, path, _opts) do
-    with :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(path, CSV.render(report)) do
+    with :ok <- Paths.ensure_private_dir(Path.dirname(path), only_if_created: true),
+         :ok <- File.write(path, CSV.render(report)),
+         :ok <- Paths.restrict_file(path) do
       {:ok, path}
     else
       {:error, reason} -> {:error, {:write_failed, path, reason}}

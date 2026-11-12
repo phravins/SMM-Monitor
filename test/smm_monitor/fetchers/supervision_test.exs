@@ -86,6 +86,41 @@ defmodule SmmMonitor.Fetchers.SupervisionTest do
     assert is_nil(status.last_error)
   end
 
+  test "status says when the last poll landed and when the next is due" do
+    assert eventually(fn -> match?(%{poll_count: count} when count > 0, Worker.status(:reddit)) end)
+
+    status = Worker.status(:reddit)
+
+    assert %DateTime{} = status.last_success_at
+    assert %DateTime{} = status.next_poll_at
+    assert DateTime.compare(status.next_poll_at, status.last_success_at) == :gt
+  end
+
+  test "poll_now/1 polls straight away instead of waiting out the interval" do
+    # The interval is a minute, so a second poll inside this test can only
+    # have come from poll_now.
+    assert eventually(fn -> match?(%{poll_count: 1}, Worker.status(:reddit)) end)
+
+    assert :ok = Worker.poll_now(:reddit)
+
+    assert eventually(fn -> Worker.status(:reddit).poll_count == 2 end)
+  end
+
+  test "poll_now/1 for a platform that isn't running is a quiet no-op" do
+    assert :ok = Worker.poll_now(:mastodon)
+  end
+
+  test "a crash report shows the worker's state without its tokens" do
+    # format_status/1 is what :sys.get_status and the crash logger print.
+    pid = Process.whereis(Worker.name(:reddit))
+    :sys.replace_state(pid, &%{&1 | platform_state: %{access_token: "s3cr3t-token"}})
+
+    report = pid |> :sys.get_status() |> inspect(limit: :infinity, printable_limit: :infinity)
+
+    refute report =~ "s3cr3t-token"
+    assert report =~ "redacted"
+  end
+
   test "status/1 reports :unavailable for a platform that isn't running" do
     # The dashboard has to render a restarting platform, not crash with it.
     assert Worker.status(:mastodon) == :unavailable

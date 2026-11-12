@@ -121,11 +121,20 @@ defmodule SmmMonitor.Fetchers.Reddit.ParseTest do
       assert [%{id: "reddit-ok1"}] = Reddit.parse(listing)
     end
 
-    test "falls back to the post url when there is no permalink" do
+    test "never uses the post's own url, which points wherever its author chose" do
       listing =
         children([%{"id" => "x", "author" => "a", "title" => "t", "url" => "https://e.test/p"}])
 
-      assert [%{url: "https://e.test/p"}] = Reddit.parse(listing)
+      assert [%{url: nil}] = Reddit.parse(listing)
+    end
+
+    test "ignores a permalink that is not a reddit path" do
+      listing =
+        children([
+          %{"id" => "x", "author" => "a", "title" => "t", "permalink" => "@evil.test/p"}
+        ])
+
+      assert [%{url: nil}] = Reddit.parse(listing)
     end
 
     test "tolerates a missing timestamp" do

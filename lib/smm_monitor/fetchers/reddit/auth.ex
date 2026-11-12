@@ -28,6 +28,8 @@ defmodule SmmMonitor.Fetchers.Reddit.Auth do
   # Reddit rejects requests with a generic or empty user agent.
   @default_user_agent "smm_monitor/0.1 (SMM Monitor)"
 
+  # The bearer token must never reach a log line or a crash report.
+  @derive {Inspect, except: [:token]}
   defstruct token: nil, expires_at: nil, obtained_at: nil, refreshes: 0
 
   @type t :: %__MODULE__{
@@ -156,12 +158,18 @@ defmodule SmmMonitor.Fetchers.Reddit.Auth do
   end
 
   defp handle_token_response({:ok, %{status: status, body: body}}, auth) do
-    {:error, {:token_request_failed, status, body}, auth}
+    {:error, {:token_request_failed, status, summarise_body(body)}, auth}
   end
 
   defp handle_token_response({:error, reason}, auth) do
     {:error, {:transport, reason}, auth}
   end
+
+  # Error tuples get logged. Keep enough of the body to diagnose a failure
+  # and nothing like a whole page of somebody else's HTML.
+  defp summarise_body(%{"error" => error}), do: to_string(error) |> String.slice(0, 120)
+  defp summarise_body(body) when is_binary(body), do: String.slice(body, 0, 120)
+  defp summarise_body(_body), do: nil
 
   defp credential_pair(credentials) do
     client_id = credentials[:client_id]

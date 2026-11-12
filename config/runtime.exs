@@ -3,8 +3,9 @@ import Config
 # Runtime configuration. This file runs on every boot (including from a
 # release), which makes it the right place to read environment variables.
 #
-# Nothing here is required: with no env vars set the app boots in mock mode
-# and shows fixture data, which is what you want for a demo or for review.
+# Nothing here is required: with no env vars set the app boots, collects
+# nothing, and says NOT CONNECTED until keys are entered in the setup
+# wizard or supplied below. `SMM_DEMO=1` shows invented demo data instead.
 
 defmodule SmmMonitor.RuntimeConfig do
   @moduledoc false
@@ -16,10 +17,46 @@ defmodule SmmMonitor.RuntimeConfig do
     end
   end
 
+  # A typo in an env file should say which variable is wrong, not crash
+  # boot with a bare ArgumentError from deep inside String.to_integer.
   def integer(var, default) do
     case System.get_env(var) do
-      nil -> default
-      value -> String.to_integer(value)
+      nil ->
+        default
+
+      value ->
+        case Integer.parse(String.trim(value)) do
+          {n, ""} -> n
+          _other -> raise ArgumentError, "#{var} must be a whole number, got #{inspect(value)}"
+        end
+    end
+  end
+
+  def integer_or_nil(var), do: if(System.get_env(var), do: integer(var, nil))
+
+  @doc """
+  Reads a webhook URL, refusing anything that is not `https://host/...`.
+
+  The URL is a credential (anyone holding it can post to the channel) and
+  the alert payload carries client names, so it must never go out in
+  clear text or to something that is not a host.
+  """
+  def https_url_or_nil(var) do
+    case System.get_env(var) do
+      nil ->
+        nil
+
+      "" ->
+        nil
+
+      value ->
+        case URI.new(String.trim(value)) do
+          {:ok, %URI{scheme: "https", host: host}} when is_binary(host) and host != "" ->
+            String.trim(value)
+
+          _other ->
+            raise ArgumentError, "#{var} must be an https:// URL"
+        end
     end
   end
 
@@ -38,8 +75,14 @@ defmodule SmmMonitor.RuntimeConfig do
 
   def float(var, default) do
     case System.get_env(var) do
-      nil -> default
-      value -> String.to_float(value)
+      nil ->
+        default
+
+      value ->
+        case Float.parse(String.trim(value)) do
+          {n, ""} -> n
+          _other -> raise ArgumentError, "#{var} must be a number, got #{inspect(value)}"
+        end
     end
   end
 
@@ -109,7 +152,7 @@ config :smm_monitor,
   alerts_enabled: RC.bool("SMM_ALERTS_ENABLED", true),
   alert_baseline_days: RC.integer("SMM_ALERT_BASELINE_DAYS", 7)
 
-if webhook = System.get_env("SMM_ALERT_WEBHOOK_URL") do
+if webhook = RC.https_url_or_nil("SMM_ALERT_WEBHOOK_URL") do
   config :smm_monitor, alert_webhook_url: webhook
 end
 
@@ -124,10 +167,13 @@ if dir = System.get_env("SMM_REPORTS_DIR") do
   config :smm_monitor, reports_dir: dir
 end
 
-# Remote dashboard access over SSH. Off unless explicitly enabled.
+# Remote dashboard access over SSH. Off unless explicitly enabled, and
+# listening on localhost only unless SMM_SSH_BIND says otherwise (reach it
+# through a VPN or `ssh -L`, or set 0.0.0.0 deliberately).
 config :smm_monitor,
   ssh_enabled: RC.bool("SMM_SSH_ENABLED", false),
-  ssh_port: RC.integer("SMM_SSH_PORT", 2222)
+  ssh_port: RC.integer("SMM_SSH_PORT", 2222),
+  ssh_bind: System.get_env("SMM_SSH_BIND", "127.0.0.1")
 
 if authorized_keys = System.get_env("SMM_SSH_AUTHORIZED_KEYS") do
   config :smm_monitor, ssh_authorized_keys: authorized_keys
@@ -141,8 +187,9 @@ end
 # have live implementations now, so `SMM_MOCK_<PLATFORM>=false` puts that
 # one on live data independently of the others.
 #
-# Unset (nil) means "inherit SMM_MOCK_MODE", so the out-of-the-box
-# experience is still fully mocked.
+# Unset (nil) means "inherit SMM_DEMO / SMM_MOCK_MODE", which is off: a
+# platform with credentials collects live data, one without collects
+# nothing. Setting one of these to `true` forces demo data for it.
 config :smm_monitor, :mock_platforms,
   reddit: RC.bool_or_nil("SMM_MOCK_REDDIT"),
   youtube: RC.bool_or_nil("SMM_MOCK_YOUTUBE"),
@@ -151,26 +198,26 @@ config :smm_monitor, :mock_platforms,
 
 # YouTube polls on its own schedule because of the API's daily quota.
 # See the README for the arithmetic behind picking a value.
-if interval_ms = System.get_env("SMM_YOUTUBE_POLL_INTERVAL_MS") do
-  config :smm_monitor, :platforms, youtube: [interval_ms: String.to_integer(interval_ms)]
+if interval_ms = RC.integer_or_nil("SMM_YOUTUBE_POLL_INTERVAL_MS") do
+  config :smm_monitor, :platforms, youtube: [interval_ms: interval_ms]
 end
 
-if budget = System.get_env("SMM_YOUTUBE_DAILY_QUOTA_BUDGET") do
-  config :smm_monitor, SmmMonitor.Fetchers.YouTube, daily_quota_budget: String.to_integer(budget)
+if budget = RC.integer_or_nil("SMM_YOUTUBE_DAILY_QUOTA_BUDGET") do
+  config :smm_monitor, SmmMonitor.Fetchers.YouTube, daily_quota_budget: budget
 end
 
 # Twitter/X. The monthly post cap is the limit that ends a month early
 # and it differs by plan, so the default is deliberately low. See README.
-if budget = System.get_env("SMM_TWITTER_MONTHLY_POST_BUDGET") do
-  config :smm_monitor, SmmMonitor.Fetchers.Twitter, monthly_post_budget: String.to_integer(budget)
+if budget = RC.integer_or_nil("SMM_TWITTER_MONTHLY_POST_BUDGET") do
+  config :smm_monitor, SmmMonitor.Fetchers.Twitter, monthly_post_budget: budget
 end
 
-if cycle_day = System.get_env("SMM_TWITTER_BILLING_CYCLE_DAY") do
-  config :smm_monitor, SmmMonitor.Fetchers.Twitter, billing_cycle_day: String.to_integer(cycle_day)
+if cycle_day = RC.integer_or_nil("SMM_TWITTER_BILLING_CYCLE_DAY") do
+  config :smm_monitor, SmmMonitor.Fetchers.Twitter, billing_cycle_day: cycle_day
 end
 
-if interval_ms = System.get_env("SMM_TWITTER_POLL_INTERVAL_MS") do
-  config :smm_monitor, :platforms, twitter: [interval_ms: String.to_integer(interval_ms)]
+if interval_ms = RC.integer_or_nil("SMM_TWITTER_POLL_INTERVAL_MS") do
+  config :smm_monitor, :platforms, twitter: [interval_ms: interval_ms]
 end
 
 # Instagram. Which of the three account-scoped sources to poll — the
@@ -189,8 +236,8 @@ if hashtags = System.get_env("SMM_INSTAGRAM_HASHTAGS") do
     hashtags: hashtags |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
 end
 
-if interval_ms = System.get_env("SMM_INSTAGRAM_POLL_INTERVAL_MS") do
-  config :smm_monitor, :platforms, instagram: [interval_ms: String.to_integer(interval_ms)]
+if interval_ms = RC.integer_or_nil("SMM_INSTAGRAM_POLL_INTERVAL_MS") do
+  config :smm_monitor, :platforms, instagram: [interval_ms: interval_ms]
 end
 
 # Which subreddits the Reddit fetcher watches. Comma-separated; an empty
@@ -201,8 +248,10 @@ if subreddits = System.get_env("SMM_REDDIT_SUBREDDITS") do
       subreddits |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
 end
 
-# API credentials. Read from the environment, never committed. See README.
-config :smm_monitor, :credentials,
+# API credentials. Read from the environment, never committed. See
+# docs/platforms.md. Keys typed into the setup wizard are stored in
+# settings.json instead and merged in at boot; a value set here wins.
+credentials = [
   reddit: [
     client_id: System.get_env("REDDIT_CLIENT_ID"),
     client_secret: System.get_env("REDDIT_CLIENT_SECRET"),
@@ -221,3 +270,20 @@ config :smm_monitor, :credentials,
     business_account_id:
       System.get_env("INSTAGRAM_BUSINESS_ACCOUNT_ID") || System.get_env("INSTAGRAM_USER_ID")
   ]
+]
+
+config :smm_monitor, :credentials, credentials
+
+# Which of those came from the environment. The wizard may replace a key
+# it saved itself, but never one an operator pinned in the env file.
+# REDDIT_USER_AGENT has a default, so it only counts when actually set.
+config :smm_monitor,
+  env_credentials:
+    for(
+      {platform, fields} <- credentials,
+      {field, value} <- fields,
+      is_binary(value) and String.trim(value) != "",
+      not (platform == :reddit and field == :user_agent and
+             is_nil(System.get_env("REDDIT_USER_AGENT"))),
+      do: {platform, field}
+    )

@@ -58,7 +58,9 @@ function Test-Wsl {
 }
 
 function Install-SmmMonitor {
-    $command = "curl -fsSL $InstallerUrl | sh"
+    # HTTPS only, redirects included. The Linux installer then checks the
+    # binary it downloads against the release's SHA256SUMS.
+    $command = "curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 $InstallerUrl | sh"
 
     if ($Distribution -ne "") {
         Write-Step "Installing into WSL distribution '$Distribution'"

@@ -64,6 +64,49 @@ defmodule SmmMonitor.Paths do
   @spec config(String.t()) :: Path.t()
   def config(name), do: Path.join(config_dir(), name)
 
+  @doc """
+  Creates `dir` if needed and makes sure only this account can open it.
+
+  The directories behind the app hold API keys, the mention database and
+  client reports. Created with the default umask they are world-readable
+  on most systems, so every one is created through here.
+
+  By default a directory that already exists is tightened too: these are
+  the app's own directories. With `only_if_created: true` an existing
+  directory is left as it is, for paths an operator chose (a reports
+  directory might be a shared folder on purpose).
+  """
+  @spec ensure_private_dir(Path.t(), keyword()) :: :ok | {:error, term()}
+  def ensure_private_dir(dir, opts \\ []) do
+    existed? = File.dir?(dir)
+
+    with :ok <- File.mkdir_p(dir) do
+      cond do
+        existed? and Keyword.get(opts, :only_if_created, false) ->
+          :ok
+
+        true ->
+          case File.chmod(dir, 0o700) do
+            # A directory somebody else owns, such as /tmp: not ours to
+            # tighten, and the files written into it are 0600 regardless.
+            {:error, :eperm} when existed? -> :ok
+            other -> other
+          end
+      end
+    end
+  end
+
+  @doc """
+  Restricts a file to its owner (mode 0600). Missing files are ignored.
+  """
+  @spec restrict_file(Path.t()) :: :ok | {:error, term()}
+  def restrict_file(file) do
+    case File.chmod(file, 0o600) do
+      {:error, :enoent} -> :ok
+      other -> other
+    end
+  end
+
   @doc "Whether systemd is telling us where to put things."
   @spec systemd?() :: boolean()
   def systemd?, do: System.get_env("STATE_DIRECTORY") != nil

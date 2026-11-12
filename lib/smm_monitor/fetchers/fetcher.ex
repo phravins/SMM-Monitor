@@ -87,10 +87,11 @@ defmodule SmmMonitor.Fetchers.Fetcher do
   @callback display_name() :: String.t()
 
   @doc """
-  Whether a live fetch can be attempted: a real implementation exists *and*
-  its credentials are configured. When this is false the worker falls back
-  to mock data instead of failing, so a missing key degrades the dashboard
-  rather than breaking it.
+  Whether a live fetch can be attempted: its credentials are configured.
+  When this is false the worker collects nothing and reports itself
+  `:unconfigured`, so the dashboard shows the platform as not connected
+  rather than failing - or inventing mentions. Demo data is only served
+  when somebody asks for it (`SMM_DEMO=1`).
   """
   @callback ready?(context()) :: boolean()
 

@@ -77,9 +77,20 @@ defmodule SmmMonitor.Fetchers.Worker do
       # Whatever the platform module carries between polls (Reddit's OAuth
       # token and rate-limit quota; nil for everyone else).
       :platform_state,
+      # The pending :poll timer, so an early poll can replace it instead of
+      # adding a second loop.
+      :timer,
       poll_count: 0,
       mode: :mock,
       last_poll_at: nil,
+      # When the last poll that actually worked finished. last_poll_at moves
+      # on every attempt; this one only on success, which is what tells
+      # the dashboard whether the numbers on screen are fresh.
+      last_success_at: nil,
+      next_poll_at: nil,
+      # Monotonic ms before which an early poll is not allowed, set when a
+      # platform asks us to back off.
+      backoff_until: nil,
       last_error: nil,
       inserted: 0,
       failures: 0,
@@ -120,9 +131,20 @@ defmodule SmmMonitor.Fetchers.Worker do
     :exit, _reason -> :unavailable
   end
 
-  @doc "Triggers a poll immediately, without waiting for the timer."
+  @doc """
+  Triggers a poll immediately, without waiting for the timer.
+
+  Used when keys are saved in the setup wizard, so a new key shows data
+  in seconds instead of after the next scheduled poll (up to 18 minutes
+  for YouTube). The pending timer is replaced, not doubled, and a
+  platform that asked for a back-off is left alone. Does nothing if the
+  worker is not running.
+  """
   @spec poll_now(atom()) :: :ok
-  def poll_now(platform), do: GenServer.cast(name(platform), :poll)
+  def poll_now(platform) do
+    if Process.whereis(name(platform)), do: GenServer.cast(name(platform), :poll_now)
+    :ok
+  end
 
   # --- server ---------------------------------------------------------------
 
@@ -139,16 +161,25 @@ defmodule SmmMonitor.Fetchers.Worker do
 
     state = %{state | platform_state: module.init_state(build_context(state, nil))}
 
-    Process.send_after(self(), :poll, :rand.uniform(@startup_jitter_ms))
+    jitter = :rand.uniform(@startup_jitter_ms)
 
-    {:ok, state}
+    {:ok,
+     %{
+       state
+       | timer: Process.send_after(self(), :poll, jitter),
+         next_poll_at: DateTime.add(DateTime.utc_now(), jitter, :millisecond)
+     }}
   end
 
   @impl true
-  def handle_info(:poll, state), do: {:noreply, poll(state)}
+  def handle_info(:poll, state), do: {:noreply, poll(%{state | timer: nil})}
 
   @impl true
   def handle_cast(:poll, state), do: {:noreply, poll(state)}
+
+  def handle_cast(:poll_now, state) do
+    if backing_off?(state), do: {:noreply, state}, else: {:noreply, poll(state)}
+  end
 
   @impl true
   def handle_call(:status, _from, state) do
@@ -158,6 +189,8 @@ defmodule SmmMonitor.Fetchers.Worker do
       mode: state.mode,
       poll_count: state.poll_count,
       last_poll_at: state.last_poll_at,
+      last_success_at: state.last_success_at,
+      next_poll_at: state.next_poll_at,
       last_error: state.last_error,
       inserted: state.inserted,
       failures: state.failures,
@@ -169,6 +202,21 @@ defmodule SmmMonitor.Fetchers.Worker do
     {:reply, status, state}
   end
 
+  # Crash reports and :sys.get_status print the whole state. The platform
+  # state holds whatever a fetcher caches between polls (Reddit's OAuth
+  # token among it), so it is reduced to its type before anything prints.
+  @impl true
+  def format_status(status) do
+    Map.update(status, :state, nil, fn
+      %State{} = state -> %{state | platform_state: redacted(state.platform_state)}
+      other -> other
+    end)
+  end
+
+  defp redacted(%module{}), do: "#" <> inspect(module) <> "<redacted>"
+  defp redacted(nil), do: nil
+  defp redacted(_other), do: "<redacted>"
+
   # --- internals ------------------------------------------------------------
 
   defp poll(state) do
@@ -179,16 +227,22 @@ defmodule SmmMonitor.Fetchers.Worker do
 
     # A fetcher that asked us to back off gets at least that long; otherwise
     # the configured interval stands.
-    schedule_next(max(retry_after || 0, state.interval_ms))
+    state = schedule_next(state, max(retry_after || 0, state.interval_ms), retry_after)
 
     %{state | poll_count: state.poll_count + 1, mode: mode, clients_due: length(clients)}
   end
+
+  defp backing_off?(%State{backoff_until: nil}), do: false
+
+  defp backing_off?(%State{backoff_until: until}),
+    do: System.monotonic_time(:millisecond) < until
 
   # No clients is not a failure — a fresh install between the first boot
   # and someone adding one — but it is worth saying once rather than
   # polling an API for nobody.
   defp poll_clients([], _mode, state) do
-    {%{state | clients_polled: 0, last_poll_at: DateTime.utc_now()}, nil}
+    now = DateTime.utc_now()
+    {%{state | clients_polled: 0, last_poll_at: now, last_success_at: now}, nil}
   end
 
   defp poll_clients(clients, mode, state) do
@@ -225,7 +279,7 @@ defmodule SmmMonitor.Fetchers.Worker do
         {:ok, %{inserted: inserted}} =
           mentions
           |> Enum.map(&assign_client(&1, client))
-          |> Monitor.record_many()
+          |> Monitor.record_fetched()
 
         {:ok,
          %{
@@ -233,6 +287,7 @@ defmodule SmmMonitor.Fetchers.Worker do
            | inserted: state.inserted + inserted,
              last_error: nil,
              last_poll_at: DateTime.utc_now(),
+             last_success_at: DateTime.utc_now(),
              platform_state: platform_state
          }}
 
@@ -362,7 +417,19 @@ defmodule SmmMonitor.Fetchers.Worker do
     |> Keyword.get(platform, [])
   end
 
-  defp schedule_next(interval_ms), do: Process.send_after(self(), :poll, interval_ms)
+  defp schedule_next(state, interval_ms, retry_after) do
+    if state.timer, do: Process.cancel_timer(state.timer)
+
+    backoff_until =
+      if retry_after, do: System.monotonic_time(:millisecond) + retry_after
+
+    %{
+      state
+      | timer: Process.send_after(self(), :poll, interval_ms),
+        next_poll_at: DateTime.add(DateTime.utc_now(), interval_ms, :millisecond),
+        backoff_until: backoff_until
+    }
+  end
 
   @doc false
   @spec context_for(module(), keyword()) :: Fetcher.context()

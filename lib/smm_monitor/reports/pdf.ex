@@ -45,12 +45,15 @@ defmodule SmmMonitor.Reports.PDF do
   @spec render(Report.t(), Path.t(), keyword()) :: {:ok, Path.t()} | {:error, term()}
   def render(%Report{} = report, path, opts \\ []) do
     with :ok <- available(),
-         :ok <- File.mkdir_p(Path.dirname(path)),
+         :ok <- SmmMonitor.Paths.ensure_private_dir(Path.dirname(path), only_if_created: true),
          {:ok, payload_path} <- write_payload(report, opts) do
       try do
-        run(payload_path, path, opts)
+        with {:ok, path} <- run(payload_path, path, opts),
+             :ok <- SmmMonitor.Paths.restrict_file(path) do
+          {:ok, path}
+        end
       after
-        File.rm(payload_path)
+        File.rm_rf(Path.dirname(payload_path))
       end
     end
   end
@@ -295,13 +298,24 @@ defmodule SmmMonitor.Reports.PDF do
 
   # --- running the renderer -------------------------------------------------
 
+  # The payload is a client's mentions and figures. In a shared /tmp a
+  # predictable name could be read by another account, or pre-created as a
+  # symlink by one, so it goes in a fresh owner-only directory with an
+  # unguessable name, created with mkdir (which fails if anything is
+  # already there) rather than mkdir_p.
   defp write_payload(report, opts) do
-    dir = Keyword.get(opts, :tmp_dir, System.tmp_dir!())
-    path = Path.join(dir, "smm-report-#{System.unique_integer([:positive])}.json")
+    base = Keyword.get(opts, :tmp_dir, System.tmp_dir!())
+    dir = Path.join(base, "smm-report-" <> Base.url_encode64(:crypto.strong_rand_bytes(12)))
+    path = Path.join(dir, "payload.json")
 
-    case File.write(path, Jason.encode!(payload(report))) do
-      :ok -> {:ok, path}
-      {:error, reason} -> {:error, {:payload_write_failed, reason}}
+    with :ok <- File.mkdir(dir),
+         :ok <- File.chmod(dir, 0o700),
+         :ok <- File.write(path, Jason.encode!(payload(report)), [:exclusive]) do
+      {:ok, path}
+    else
+      {:error, reason} ->
+        File.rm_rf(dir)
+        {:error, {:payload_write_failed, reason}}
     end
   end
 
@@ -336,7 +350,16 @@ defmodule SmmMonitor.Reports.PDF do
     end
   end
 
-  defp python, do: System.find_executable("python3")
+  # SMM_PYTHON names the interpreter outright (a virtualenv with
+  # reportlab, say), so the one that runs is not just whichever python3
+  # comes first on PATH.
+  defp python do
+    case System.get_env("SMM_PYTHON") do
+      nil -> System.find_executable("python3")
+      "" -> System.find_executable("python3")
+      path -> if File.regular?(path), do: path, else: System.find_executable(path)
+    end
+  end
 
   defp reportlab? do
     case System.cmd(python(), ["-c", "import reportlab"], stderr_to_stdout: true) do

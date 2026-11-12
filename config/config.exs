@@ -13,8 +13,10 @@ config :smm_monitor,
   retention_ms: :timer.hours(48),
   # Hard cap on rows kept in ETS, so a chatty platform can't eat all memory.
   max_mentions: 2_000,
-  # Mock mode is the default so the tool runs with fake data out of the box.
-  mock_mode: true,
+  # Demo (invented) data is off: a platform with credentials collects live
+  # data and one without collects nothing. runtime.exs turns it on for the
+  # test suite and when SMM_DEMO=1 is set.
+  mock_mode: false,
   # How many mentions per platform to restore from the database on boot,
   # so the dashboard isn't empty after a restart.
   history_limit: 200,
@@ -36,7 +38,9 @@ config :smm_monitor,
   # Remote access over SSH is opt-in; see SMM_SSH_ENABLED in the README.
   ssh_enabled: false,
   # Unprivileged by default, so the app never needs root to bind.
-  ssh_port: 2222
+  ssh_port: 2222,
+  # Loopback only unless SMM_SSH_BIND says otherwise.
+  ssh_bind: "127.0.0.1"
 
 # One entry per platform worker. `module` implements SmmMonitor.Fetchers.Fetcher.
 # Adding a platform is a matter of writing the module and adding a line here.
@@ -46,8 +50,11 @@ config :smm_monitor, :platforms,
     module: SmmMonitor.Fetchers.YouTube,
     enabled: true,
     # Far slower than the other platforms on purpose: a YouTube search
-    # costs 100 of the 10,000 free daily quota units. See the README.
-    interval_ms: :timer.minutes(5),
+    # costs 100 of the 10,000 free daily quota units, and the fetcher
+    # stops for the day at the 8,000-unit budget. At 18 minutes that is
+    # 80 searches a day, so collection runs around the clock instead of
+    # going dark in the evening. See docs/platforms.md.
+    interval_ms: :timer.minutes(18),
     opts: []
   ],
   twitter: [
@@ -67,16 +74,18 @@ config :smm_monitor, :platforms,
     opts: []
   ]
 
-# Reddit is the one platform with a live implementation. Which subreddits
-# to watch is deployment-specific, so `SMM_REDDIT_SUBREDDITS` overrides
-# this list at runtime. An empty list searches all of Reddit.
+# Which subreddits to watch is deployment-specific, so
+# `SMM_REDDIT_SUBREDDITS` overrides this list at runtime (and each client
+# can name its own). An empty list searches all of Reddit.
 config :smm_monitor, SmmMonitor.Fetchers.Reddit,
   subreddits: ["smallbusiness", "marketing", "socialmedia", "Entrepreneur"],
   # Items per request. Reddit caps a listing at 100.
   limit: 50,
   sort: "new",
   # How far back the search reaches: hour, day, week, month, year, all.
-  time_filter: "week"
+  # "day" keeps every result inside the 48h in-memory window, so a post
+  # is never pruned and then re-fetched as if it were new.
+  time_filter: "day"
 
 # YouTube's free tier is 10,000 quota units a day and a search costs 100,
 # so the real ceiling is 100 searches a day. The budget below stops short

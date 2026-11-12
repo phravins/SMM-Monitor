@@ -46,6 +46,18 @@ defmodule SmmMonitor.Monitor do
   def record_many(mentions), do: Processor.ingest(mentions)
 
   @doc """
+  Records a freshly fetched batch, dropping anything older than the
+  in-memory retention window.
+
+  What the fetchers use. A platform search can return posts older than
+  the window the dashboard keeps; without this they would be pruned and
+  then re-inserted on the next poll, each time counted as new - inflating
+  the counters and re-firing alerts.
+  """
+  @spec record_fetched([Mention.t() | map()]) :: {:ok, map()}
+  def record_fetched(mentions), do: Processor.ingest_fresh(mentions)
+
+  @doc """
   Aggregate counts and sentiment for a platform over a time window.
 
   `platform` is `:all` or a platform atom; `window` is a duration in

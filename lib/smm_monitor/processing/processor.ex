@@ -69,6 +69,16 @@ defmodule SmmMonitor.Processing.Processor do
     GenServer.call(server, {:ingest, mentions})
   end
 
+  @doc """
+  Like `ingest/2`, but drops mentions older than `:retention_ms` instead
+  of storing them. The result carries a `:stale` count.
+  """
+  @spec ingest_fresh(GenServer.server(), [Mention.t() | map()]) ::
+          {:ok, %{inserted: non_neg_integer(), duplicates: non_neg_integer()}}
+  def ingest_fresh(server \\ __MODULE__, mentions) when is_list(mentions) do
+    GenServer.call(server, {:ingest, mentions, :fresh_only})
+  end
+
   @doc "The ETS table mentions are stored in, for direct reads."
   @spec table(GenServer.server()) :: :ets.table()
   def table(server \\ __MODULE__), do: GenServer.call(server, :table)
@@ -117,6 +127,18 @@ defmodule SmmMonitor.Processing.Processor do
   end
 
   @impl true
+  def handle_call({:ingest, mentions, :fresh_only}, from, state) do
+    cutoff = retention_cutoff()
+
+    {fresh, stale} =
+      mentions
+      |> Enum.map(&normalize/1)
+      |> Enum.split_with(&(Mention.epoch_ms(&1) >= cutoff))
+
+    {:reply, {:ok, result}, state} = handle_call({:ingest, fresh}, from, state)
+    {:reply, {:ok, Map.put(result, :stale, length(stale))}, state}
+  end
+
   def handle_call({:ingest, mentions}, _from, state) do
     {state, result, stored} =
       Enum.reduce(mentions, {state, %{inserted: 0, duplicates: 0}, []}, fn raw,
@@ -203,13 +225,14 @@ defmodule SmmMonitor.Processing.Processor do
   end
 
   defp do_prune(state) do
-    retention = SmmMonitor.config(:retention_ms, :timer.hours(48))
     max = SmmMonitor.config(:max_mentions, 2_000)
+    Store.prune(state.table, retention_cutoff(), max)
+  end
 
-    cutoff =
-      DateTime.utc_now() |> DateTime.add(-retention, :millisecond) |> DateTime.to_unix(:millisecond)
+  defp retention_cutoff do
+    retention = SmmMonitor.config(:retention_ms, :timer.hours(48))
 
-    Store.prune(state.table, cutoff, max)
+    DateTime.utc_now() |> DateTime.add(-retention, :millisecond) |> DateTime.to_unix(:millisecond)
   end
 
   defp schedule_prune, do: Process.send_after(self(), :prune, @prune_interval_ms)

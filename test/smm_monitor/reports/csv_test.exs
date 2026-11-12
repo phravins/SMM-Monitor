@@ -129,6 +129,25 @@ defmodule SmmMonitor.Reports.CSVTest do
       assert length(lines(csv)) == 3
     end
 
+    test "a post that looks like a formula is written as text" do
+      for hostile <- ["=1+1", "+cmd", "-2+3", "@SUM(A1)", "\t=1", "\r=1"] do
+        assert CSV.escape(hostile) |> String.trim_leading("\"") |> String.starts_with?("'"),
+               "#{inspect(hostile)} was not defused"
+      end
+    end
+
+    test "a formula in a mention's text cannot reach the spreadsheet" do
+      csv = render([mention(id: "a", text: ~s[=HYPERLINK("https://evil.test","click")])])
+
+      refute csv =~ ~r/(^|,)=HYPERLINK/m
+      assert csv =~ "'=HYPERLINK"
+    end
+
+    test "leaves negative numbers as numbers" do
+      assert CSV.escape("-0.300") == "-0.300"
+      assert CSV.escape("-2") == "-2"
+    end
+
     test "leaves an ordinary field alone" do
       assert CSV.escape("plain text") == "plain text"
     end
