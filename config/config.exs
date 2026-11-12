@@ -83,6 +83,15 @@ config :smm_monitor, :platforms,
     enabled: true,
     tab: :when_on,
     opts: []
+  ],
+  # Not polled either: a bot on Discord's Gateway, reading the servers it
+  # has been invited to. Collects nothing until DISCORD_BOT_TOKEN is set.
+  discord: [
+    module: SmmMonitor.Fetchers.Discord,
+    kind: :stream,
+    enabled: true,
+    tab: :when_on,
+    opts: []
   ]
 
 # Which subreddits to watch is deployment-specific, so

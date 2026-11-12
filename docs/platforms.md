@@ -2,7 +2,7 @@
 
 [← Back to the README](../README.md)
 
-SMM Monitor collects from five platforms. Four are switched on by
+SMM Monitor collects from six platforms. Five are switched on by
 giving them credentials; Bluesky needs no account and is switched on
 with one setting. **A platform that is switched on collects live data;
 one that is not collects nothing** and shows as not connected. Nothing
@@ -15,6 +15,7 @@ is invented unless you ask for demo data with `SMM_DEMO=1`.
 | **X (Twitter)** | Paid API plan | Environment | Recent public posts matching your brand terms (last 7 days) |
 | **Instagram** | Business account | Environment | Only your own account's surroundings — [see below](#what-instagram-monitoring-can-and-cannot-see) |
 | **Bluesky** | Free, no account | Environment (`SMM_BLUESKY_ENABLED=true`) | Every new public post that names your brand, within a second or two — [see below](#bluesky) |
+| **Discord** | Free | Environment (`DISCORD_BOT_TOKEN`) | Messages that name your brand, in the servers you invite the bot to — [see below](#discord) |
 
 **Start with Reddit.** It is free, it takes about three minutes, and it
 behaves most like what people expect the whole app to do.
@@ -575,9 +576,125 @@ for each batch of matched posts with authors not yet known, one
 to 25 of them. Nothing about your clients or brand terms is sent to
 Bluesky: matching happens on your machine.
 
+## Discord
+
+Discord has no public search: nobody outside a server can read it. So
+SMM Monitor joins Discord as a **bot that you invite to the servers you
+want watched**: your own community, or a client's, with their
+permission. Like Bluesky it is **pushed, not polled**. The bot keeps one
+connection open to Discord's Gateway, every new message in those servers
+arrives about a second after it is sent, and the ones that name a
+client's brand terms are stored. Everything else is thrown away unread.
+
+It is free.
+
+### Creating the bot
+
+1. Open the [Discord Developer Portal](https://discord.com/developers/applications)
+   and choose **New Application**. Any name will do; members see it as the
+   bot's name.
+2. Under **Bot**, choose **Reset Token** and copy the token. It is shown
+   once. Treat it like a password: anyone holding it can act as the bot.
+3. Still under **Bot**, switch on **Message Content Intent**. Without it
+   Discord refuses the connection, and the bot stops with a log line
+   saying what to turn on. Bots in fewer than 100 servers need no review
+   from Discord to use it.
+4. Copy the **Application ID** from **General Information**.
+
+### Inviting it
+
+Open this link with your application id in place of `APP_ID`, pick a
+server, and approve:
+
+```text
+https://discord.com/oauth2/authorize?client_id=APP_ID&scope=bot&permissions=66560
+```
+
+`66560` is **View Channels** and **Read Message History** and nothing
+else: the bot cannot post, react, moderate or see anything a member with
+those two permissions could not. You need the **Manage Server**
+permission to invite a bot. Repeat for each server. To keep the bot out
+of a channel, deny it **View Channel** there, as for any member.
+
+### Adding the token
+
+```sh
+DISCORD_BOT_TOKEN=paste-the-token-here
+```
+
+Restart, and a **Discord** tab appears (or press `d`). The footer shows
+`discord:stream` while connected. The token is read from the environment
+only; the setup wizard does not ask for it.
+
+### Listening to fewer places
+
+By default the bot reads every channel it can see in every server it is
+in. Two settings narrow that:
+
+```sh
+# Only these servers...
+SMM_DISCORD_GUILDS=123456789012345678
+# ...and/or only these channels (and the threads inside them).
+SMM_DISCORD_CHANNELS=234567890123456789,345678901234567890
+```
+
+When either is set, a message is read only if its server is in the first
+list or its channel is in the second. To copy an id, turn on **Developer
+Mode** in Discord (User Settings → Advanced), then right-click a server or
+channel and choose **Copy ID**. Ids are long numbers; anything else stops
+the app at start-up with the setting's name, so a typo does not silently
+watch nothing.
+
+### Tell the members
+
+A bot reading a community's messages is something its members should
+know about, even though only messages that name a brand are kept. Say so
+where they will see it, such as the server's rules or welcome channel,
+and only invite the bot where you are entitled to. Discord's
+[Developer Policy](https://discord.com/developers/docs/policies-and-agreements/developer-policy)
+applies to how the data is used.
+
+### What it reads, and what it skips
+
+- **Read:** new messages from people, including replies and messages in
+  threads, in channels the bot can view.
+- **Skipped:** direct messages, messages from bots and webhooks, system
+  messages (joins, pins, boosts), and messages with no text.
+- **Not followed:** edits and deletions. A mention stays as it was first
+  sent.
+
+In a stored mention the author shows as their display name and channel,
+for example `Maya (#general)`, and Discord's `<@123…>` mention codes are
+turned back into names. The link opens the message in Discord, for anyone
+who is a member of that server.
+
+### Downtime and restarts
+
+Short drops cost nothing: the bot resumes its session and Discord replays
+what was sent in the meantime. For longer gaps, such as a restart or an
+outage too long to resume, the id of the last message seen in each
+channel is saved every 10 seconds to `discord.cursor`, next to the
+database. After reconnecting, the bot asks Discord for what was posted in
+those channels since, 100 messages at a time and up to 1,000 per channel,
+respecting Discord's rate limits. Messages seen twice are stored once.
+
+A connection that drops is retried after 1, 2, 4 ... up to 60 seconds. If
+Discord rejects the token or the Message Content Intent, the bot stops
+rather than retrying in a loop: the footer shows `discord:stopped`, the
+log says what to fix, and it tries again after 10 minutes.
+
+### What Discord gets asked
+
+One WebSocket to `gateway.discord.gg` (or the resume address Discord gives
+it), identifying with the token and asking for server, message and
+message-content events. After a restart, one
+`GET https://discord.com/api/v10/channels/{id}/messages?after={id}&limit=100`
+per channel that had messages before. Nothing about your clients or brand
+terms is sent to Discord: matching happens on your machine.
+
 ## What each platform actually gives you
 
-All five platforms run on live APIs. What differs is **how much of the platform each
+All six platforms run on live APIs. What differs is **how much of the platform each
 one can see**, which matters more than whether the code is written:
 
 | Platform | Coverage | How it works |
@@ -587,6 +704,7 @@ one can see**, which matters more than whether the code is written:
 | **Twitter/X** | **Platform-wide search**, last 7 days, retweets excluded. | v2 `/2/tweets/search/recent` with an app-only bearer token. Two limits tracked separately: the 15-minute window from headers, the monthly post cap locally. **Paid tier required.** |
 | **Instagram** | **Not brand-wide.** Only posts that tag your account, comments on your own posts, and (opt-in) public posts carrying a tracked hashtag. | Graph API, scoped to one Business account. The Graph API has no keyword search at any tier — see [What Instagram monitoring can and cannot see](#what-instagram-monitoring-can-and-cannot-see). |
 | **Bluesky** | **Everything new, as it is posted.** Every public post from the moment of connecting (and up to an hour back after downtime). No search of older posts. | Jetstream WebSocket, matched locally against brand terms. No account. Off by default because of the steady bandwidth. |
+| **Discord** | **Only servers the bot is invited to.** Every new message there, as it is sent (and what was missed during downtime, in channels seen before). No search of other servers. | Gateway WebSocket as a bot, matched locally against brand terms. Needs Message Content Intent. |
 
 Every platform independently collects nothing when its credentials are
 missing, and says so in the log. So a half-configured install shows real
@@ -597,8 +715,9 @@ you actually want.
 
 **Coverage is uneven, on purpose.** Reddit, YouTube, X and Bluesky
 answer "who mentioned us anywhere?"; Instagram answers "who tagged us, and what did
-people say on our own posts?". A quiet Instagram tab does not mean
-nobody is talking about the brand there.
+people say on our own posts?"; Discord answers "what are people saying in
+the communities we are part of?". A quiet Instagram or Discord tab does
+not mean nobody is talking about the brand there.
 
 
 ## Clearing out old demo mentions

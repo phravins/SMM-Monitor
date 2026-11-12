@@ -19,7 +19,13 @@ defmodule SmmMonitor.Fetchers.StreamWorkerTest do
 
     defmodule State do
       @moduledoc false
-      defstruct token: "super-secret-token", opened: 0, closed: 0
+      defstruct token: "super-secret-token",
+                opened: 0,
+                closed: 0,
+                beat_ms: nil,
+                zombie: false,
+                resumable: false,
+                pending: []
     end
 
     @impl true
@@ -41,19 +47,53 @@ defmodule SmmMonitor.Fetchers.StreamWorkerTest do
     def handle_message(%{"stop" => reason}, state), do: {:stop, reason, state}
     def handle_message(%{"reconnect" => true}, state), do: {:reconnect, state}
 
-    def handle_message(%{"id" => id, "text" => text}, state) do
-      post = %{
+    # Like Discord's Hello: the heartbeat interval only arrives in a message.
+    def handle_message(%{"beat_ms" => ms}, state), do: {:ok, [], [], %{state | beat_ms: ms}}
+    def handle_message(%{"zombie" => true}, state), do: {:ok, [], [], %{state | zombie: true}}
+
+    def handle_message(%{"resumable" => true}, state),
+      do: {:ok, [], [], %{state | resumable: true}}
+
+    # A post held back for tick/1, as a catch-up fetch would deliver it.
+    def handle_message(%{"later" => id, "text" => text}, state),
+      do: {:ok, [], [], %{state | pending: [post(id, text) | state.pending]}}
+
+    def handle_message(%{"id" => id, "text" => text}, state),
+      do: {:ok, [post(id, text)], [], state}
+
+    def handle_message(_other, state), do: {:ok, [], [], state}
+
+    @impl true
+    def heartbeat_ms(state), do: state.beat_ms
+
+    @impl true
+    def heartbeat(%State{zombie: true} = state), do: {:reconnect, state}
+    def heartbeat(state), do: {[~s({"op":"beat"})], state}
+
+    @impl true
+    def handle_close(4004, state), do: {:stop, "bad token", state}
+    def handle_close(_code, state), do: {:reconnect, state}
+
+    @impl true
+    def close_code(%State{resumable: true}), do: 4000
+    def close_code(_state), do: 1000
+
+    @impl true
+    def max_message_bytes,
+      do: Application.get_env(:smm_monitor, :stream_test_max_bytes, 1_048_576)
+
+    @impl true
+    def tick(state), do: {state.pending, %{state | pending: []}}
+
+    defp post(id, text) do
+      %{
         id: id,
         author: "someone",
         text: text,
         url: "https://example.test/#{id}",
         timestamp: DateTime.utc_now()
       }
-
-      {:ok, [post], [], state}
     end
-
-    def handle_message(_other, state), do: {:ok, [], [], state}
 
     # Proves enrich runs on the batch before it is stored.
     @impl true
@@ -239,6 +279,100 @@ defmodule SmmMonitor.Fetchers.StreamWorkerTest do
       end)
 
       assert StreamWorker.status(:stream_test).connection == :reconnecting
+    end
+  end
+
+  describe "hooks a platform can use" do
+    test "a heartbeat interval learned from a message starts the heartbeat" do
+      server = FakeWsServer.start()
+      start_worker(url: server.url <> "/")
+      conn = FakeWsServer.await_connection()
+      assert_receive {:fake_ws_frame, ^conn, 1, ~s({"op":"hello"})}
+
+      refute_receive {:fake_ws_frame, ^conn, 1, ~s({"op":"beat"})}, 200
+
+      FakeWsServer.send_text(conn, ~s({"beat_ms":50}))
+      assert_receive {:fake_ws_frame, ^conn, 1, ~s({"op":"beat"})}, 1_000
+      # And it keeps going.
+      assert_receive {:fake_ws_frame, ^conn, 1, ~s({"op":"beat"})}, 1_000
+    end
+
+    test "a heartbeat that asks to reconnect replaces the connection" do
+      server = FakeWsServer.start()
+
+      capture_log(fn ->
+        start_worker(url: server.url <> "/")
+        conn = FakeWsServer.await_connection()
+        FakeWsServer.send_text(conn, ~s({"zombie":true}))
+        FakeWsServer.send_text(conn, ~s({"beat_ms":50}))
+
+        assert_receive {:fake_ws_closed, ^conn}, 1_000
+
+        assert eventually(fn ->
+                 StreamWorker.status(:stream_test).last_error == :heartbeat_not_acknowledged
+               end)
+
+        FakeWsServer.await_connection(4_000)
+      end)
+    end
+
+    test "a close code the platform treats as fatal stops the worker" do
+      server = FakeWsServer.start()
+
+      capture_log(fn ->
+        start_worker(url: server.url <> "/")
+        conn = FakeWsServer.await_connection()
+        FakeWsServer.close(conn, 4004)
+
+        assert eventually(fn -> StreamWorker.status(:stream_test).connection == :stopped end)
+      end)
+
+      assert StreamWorker.status(:stream_test).last_error == "bad token"
+      refute_receive {:fake_ws_connected, _conn, _request}, 2_500
+    end
+
+    test "the platform chooses the close code" do
+      server = FakeWsServer.start()
+      start_worker(url: server.url <> "/")
+      conn = FakeWsServer.await_connection()
+
+      FakeWsServer.send_text(conn, ~s({"resumable":true}))
+      FakeWsServer.send_text(conn, ~s({"reconnect":true}))
+
+      assert_receive {:fake_ws_frame, ^conn, 8, <<4000::16>>}, 1_000
+      FakeWsServer.await_connection(4_000)
+    end
+
+    test "the platform sets its own message size cap" do
+      Application.put_env(:smm_monitor, :stream_test_max_bytes, 100)
+      on_exit(fn -> Application.delete_env(:smm_monitor, :stream_test_max_bytes) end)
+      server = FakeWsServer.start()
+
+      capture_log(fn ->
+        start_worker(url: server.url <> "/")
+        conn = FakeWsServer.await_connection()
+        FakeWsServer.send_text(conn, String.duplicate("x", 200))
+
+        assert eventually(fn ->
+                 StreamWorker.status(:stream_test).last_error == :message_too_large
+               end)
+      end)
+    end
+
+    test "posts returned by tick are matched and stored" do
+      server = FakeWsServer.start()
+      start_worker(url: server.url <> "/")
+      conn = FakeWsServer.await_connection()
+
+      FakeWsServer.send_text(conn, ~s({"later":"t1","text":"Acme, a while ago"}))
+      FakeWsServer.send_text(conn, ~s({"later":"t2","text":"unrelated"}))
+      assert eventually(fn -> length(platform_state().pending) == 2 end)
+
+      StreamWorker.poll_now(:stream_test)
+
+      assert eventually(fn -> Monitor.recent(:all, 100, "acme") != [] end)
+      assert [%{id: "t1", author: "@enriched"}] = Monitor.recent(:all, 100, "acme")
+      assert platform_state().pending == []
     end
   end
 

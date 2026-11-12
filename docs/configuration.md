@@ -48,6 +48,7 @@ connected. Walkthroughs for getting each one are in
 | `TWITTER_BEARER_TOKEN` | X | Needs a paid X API plan |
 | `INSTAGRAM_ACCESS_TOKEN` | Instagram | Long-lived token; expires after 60 days |
 | `INSTAGRAM_BUSINESS_ACCOUNT_ID` | Instagram | The 17-digit account id. `INSTAGRAM_USER_ID` is accepted as an older name |
+| `DISCORD_BOT_TOKEN` | Discord | The bot's token from the Developer Portal. Environment only |
 
 Bluesky needs no credentials. It is switched on with a setting, because
 its stream uses bandwidth around the clock
@@ -57,6 +58,20 @@ its stream uses bandwidth around the clock
 | --- | --- | --- |
 | `SMM_BLUESKY_ENABLED` | `false` | `true` connects to Bluesky's Jetstream and matches every new post against your clients' brand terms |
 | `SMM_BLUESKY_JETSTREAM_URL` | `wss://jetstream2.us-east.bsky.network/subscribe` | A different Jetstream server, including one you run. Must be `wss://` |
+
+Discord reads every channel the bot can see in every server it has been
+invited to. Two optional lists narrow that
+([platforms.md](platforms.md#listening-to-fewer-places)). A message is
+read when its server is in the first list or its channel (or a thread's
+parent channel) is in the second:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SMM_DISCORD_GUILDS` | empty (all servers) | Comma-separated server ids |
+| `SMM_DISCORD_CHANNELS` | empty (all channels) | Comma-separated channel ids. Threads inside them are included |
+
+Ids are the long numbers Discord's **Copy ID** gives. Anything else stops
+the app at start-up with the setting's name.
 
 ## Polling and platform limits
 
@@ -97,6 +112,9 @@ before adding many clients.
 
 Bluesky's stream position is saved as `bluesky.cursor` in the same
 directory as the database, so a restart carries on where it left off.
+Discord's is `discord.cursor`: the last message id seen in each channel
+(up to 500 channels), used to fetch what was missed after a restart. Both
+are `0600` and safe to delete; the next run then starts from now.
 
 `~/.config` and `~/.local/share` follow `XDG_CONFIG_HOME` and
 `XDG_DATA_HOME` when they are set. Under systemd, the defaults are
@@ -155,7 +173,7 @@ SSH needs a patched Erlang/OTP runtime. See [ssh.md](ssh.md).
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SMM_DEMO` | unset | Set to `1` to show invented sample mentions everywhere. The header then says `DEMO DATA`. `SMM_MOCK_MODE=true` is the older spelling |
-| `SMM_MOCK_REDDIT`, `SMM_MOCK_YOUTUBE`, `SMM_MOCK_TWITTER`, `SMM_MOCK_INSTAGRAM`, `SMM_MOCK_BLUESKY` | unset | `true` forces demo data on that one platform, even with credentials. You never need `false`: credentials alone make a platform live |
+| `SMM_MOCK_REDDIT`, `SMM_MOCK_YOUTUBE`, `SMM_MOCK_TWITTER`, `SMM_MOCK_INSTAGRAM`, `SMM_MOCK_BLUESKY`, `SMM_MOCK_DISCORD` | unset | `true` forces demo data on that one platform, even with credentials. You never need `false`: credentials alone make a platform live |
 | `SMM_TUI` | on in the downloaded binary, off otherwise | `1` draws the dashboard in this terminal (`SMM_TUI=1 mix run --no-halt`, or a release started with `bin/smm_monitor start`). `0` runs headless: collecting, alerting and serving SSH only |
 
 Application config keys (for `config/*.exs`) are listed in

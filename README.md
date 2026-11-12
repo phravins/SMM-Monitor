@@ -32,10 +32,10 @@ sentiment summary and a table of recent mentions](docs/images/dashboard.png)
 ## How it works
 
 ```text
-  Reddit   YouTube   X (Twitter)   Instagram         Bluesky
-     │        │          │            │                 │
-     └────────┴─────┬────┴────────────┘                 │
-                    ▼                                   ▼
+  Reddit   YouTube   X (Twitter)   Instagram     Bluesky   Discord
+     │        │          │            │             │         │
+     └────────┴─────┬────┴────────────┘             └────┬────┘
+                    ▼                                    ▼
        one poller per platform            one live stream, matched
        (asks every 30 s to 18 min,        against brand terms as
         within rate limits and quotas)    posts are written
@@ -61,16 +61,19 @@ sentiment summary and a table of recent mentions](docs/images/dashboard.png)
   every 30 seconds, X every 5 minutes, Instagram every 15 and YouTube
   every 18. The intervals are set by what each API allows for free, or
   for what you pay.
-- **Streaming.** Bluesky is not polled. One connection stays open and
-  receives every new post on the network as it is written; posts that
-  name a client's brand are stored within a second or two.
+- **Streaming.** Bluesky and Discord are not polled. One connection
+  each stays open and receives new posts as they are written: every
+  post on Bluesky, and every message in the Discord servers you invite
+  the bot to. Those that name a client's brand are stored within a
+  second or two.
 - **Sentiment.** Every post gets a score from −1.0 to 1.0 from a word
   list. That is fast and needs no external service, but it can be
   fooled by sarcasm. See [docs/sentiment.md](docs/sentiment.md).
 - **Storage.** Mentions are kept in a SQLite file on your machine for
   30 days by default. Nothing is sent anywhere except to the platform
-  APIs and, if you set one up, your Slack webhook. Bluesky is never told
-  your brand terms: its posts are matched on your machine.
+  APIs and, if you set one up, your Slack webhook. Bluesky and Discord
+  are never told your brand terms: their posts are matched on your
+  machine.
 
 **Is the data real?** The top line of every screen ends with one word:
 
@@ -234,7 +237,8 @@ readable only by you. On a server the setup is skipped automatically.
 
 A platform starts collecting as soon as it has credentials. Without them
 it shows as not connected and collects nothing. Bluesky needs no
-credentials, only switching on.
+credentials, only switching on. Discord works through a bot you invite
+to your own (or a client's) servers.
 
 | Platform | Cost | How to connect | What it can find |
 | --- | --- | --- | --- |
@@ -243,6 +247,7 @@ credentials, only switching on.
 | **X (Twitter)** | Paid API plan | `TWITTER_BEARER_TOKEN` | Posts from the last 7 days that match |
 | **Instagram** | Business account | `INSTAGRAM_ACCESS_TOKEN` and `INSTAGRAM_BUSINESS_ACCOUNT_ID` | Only posts that tag your account, comments on your own posts and, optionally, hashtags. Instagram has **no keyword search** |
 | **Bluesky** | Free, no account | `SMM_BLUESKY_ENABLED=true` | Every new public post that names the brand, about a second after it is written. Off by default because the stream downloads all of Bluesky around the clock |
+| **Discord** | Free | `DISCORD_BOT_TOKEN`, then invite the bot | Messages that name the brand, in the servers the bot is invited to, about a second after they are sent. Discord has no public search |
 
 **Start with Reddit:** it is free and takes about three minutes.
 
@@ -272,6 +277,7 @@ win over keys typed into the wizard. You no longer need any
 | `a` | All of this client's platforms |
 | `r` `y` `t` `i` | Reddit · YouTube · Twitter/X · Instagram only |
 | `b` | Bluesky only (its tab appears once it is switched on) |
+| `d` | Discord only (its tab appears once it has a token). On the config screen `d` still removes a client |
 | `←` / `→` | Previous / next tab |
 | `j` / `k`, `↓` / `↑` | Scroll the mentions table |
 | `PgDn` / `PgUp` | Scroll a page at a time |
@@ -332,8 +338,11 @@ youtube       live · 4m ago · next 14m
 twitter       unconfigured
 ```
 
-Bluesky shows `stream` while connected, `reconnecting` while it waits to
-try again, and `idle` when there is no client to match for.
+Bluesky and Discord show `stream` while connected, `reconnecting` while
+they wait to try again, and `idle` when there is no client to match for.
+Discord shows `stopped` (and, after 90 seconds, `stale`) when Discord
+has rejected the token or the Message Content Intent. The log says
+which, and it tries again after 10 minutes.
 
 If a platform's last good fetch is more than three intervals old, it is
 marked **`stale`**. That usually means a wrong or expired key, a spent
@@ -347,6 +356,7 @@ quota, or no network. A platform whose last poll failed shows `error`.
 | Instagram | 15 minutes | Meta's hourly allowance | `SMM_INSTAGRAM_POLL_INTERVAL_MS` |
 | YouTube | 18 minutes | 10,000 free quota units a day, 100 per search | `SMM_YOUTUBE_POLL_INTERVAL_MS` |
 | Bluesky | Live (about 1 s) | Posts are pushed as they are written; stale after 90 s of silence | — |
+| Discord | Live (about 1 s) | Messages are pushed as they are sent; Discord checks in every 41 s, so a quiet server stays fresh | — |
 
 Each poll asks only for recent posts (the last day on Reddit and
 YouTube), and anything already seen is skipped, so a post appears once.

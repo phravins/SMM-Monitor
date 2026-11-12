@@ -78,6 +78,24 @@
 * A Bluesky author shows as their DID (`did:plc:...`) when the public
   profile lookup fails or times out; the handle is not filled in later
   for mentions already stored.
+* **Discord only sees servers the bot has been invited to**, and only
+  channels it is allowed to view. There is no public search: other
+  communities are invisible. Direct messages, bots, webhooks and system
+  messages are skipped.
+* Discord **edits and deletions are not followed**. A mention stays as it
+  was first sent, even if the author edits or deletes it.
+* Discord's catch-up after a restart covers **only channels that had a
+  message before the restart**, and at most **1,000 messages** (10 pages
+  of 100) per channel. A busier channel, or a channel created while the
+  app was down, loses the rest. Short drops are replayed by Discord
+  itself and lose nothing.
+* There is **no sharding**. Discord requires it at 2,500 servers; the
+  bot stops with a log line saying so. Using Message Content Intent in
+  **100 or more servers** also needs Discord's review of the bot.
+* With `SMM_DISCORD_CHANNELS` set, a thread is allowed through its
+  parent channel, so a thread whose parent the bot has not seen yet
+  (for example, one in a server still loading) is skipped until it has.
+* Discord matching is whole words only, the same as Bluesky.
 * SSH access has no rate limiting or audit trail beyond one log line per
   connection — run it behind a VPN or firewall rather than exposed.
 * Remote sessions are read-only; there's no per-user permission model,

@@ -55,7 +55,8 @@ defmodule SmmMonitor.TUI.TrendsScreenTest do
     end
 
     test "the tab bar keeps its counts when the terminal is wide enough" do
-      model = Model.new(%{window: %{height: 40, width: 120}})
+      # Nine tabs with their counts (Bluesky and Discord show in tests).
+      model = Model.new(%{window: %{height: 40, width: 160}})
 
       assert {:trends, "trends (14d)"} in Model.tab_labels(model)
       assert Enum.any?(Model.tab_labels(model), fn {_tab, label} -> label =~ "(" end)

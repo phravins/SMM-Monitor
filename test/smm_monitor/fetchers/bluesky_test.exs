@@ -188,7 +188,7 @@ defmodule SmmMonitor.Fetchers.BlueskyTest do
       assert state.cursor == nil
 
       {:ok, _posts, [], state} = Bluesky.handle_message(@commit, state)
-      state = Bluesky.tick(state)
+      {[], state} = Bluesky.tick(state)
 
       assert File.read!(file) == Integer.to_string(@commit["time_us"])
       assert File.stat!(file).mode |> Bitwise.band(0o777) == 0o600
@@ -208,10 +208,10 @@ defmodule SmmMonitor.Fetchers.BlueskyTest do
 
     test "is not rewritten more than every 10 seconds", %{tmp_dir: dir} do
       file = Path.join(dir, "bluesky.cursor")
-      state = Bluesky.tick(%Bluesky.State{cursor_file: file, cursor: 1})
+      {[], state} = Bluesky.tick(%Bluesky.State{cursor_file: file, cursor: 1})
       assert File.read!(file) == "1"
 
-      state = Bluesky.tick(%{state | cursor: 2})
+      {[], state} = Bluesky.tick(%{state | cursor: 2})
       assert File.read!(file) == "1"
       assert state.cursor == 2
     end

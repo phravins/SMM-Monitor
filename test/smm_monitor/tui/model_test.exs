@@ -379,6 +379,61 @@ defmodule SmmMonitor.TUI.ModelTest do
     end
   end
 
+  describe "Discord's tab" do
+    @describetag :tmp_dir
+
+    setup %{tmp_dir: dir} do
+      saved =
+        for key <- [SmmMonitor.Fetchers.Discord, :credentials, :mock_platforms],
+            do: {key, Application.get_env(:smm_monitor, key)}
+
+      Application.put_env(:smm_monitor, SmmMonitor.Fetchers.Discord,
+        cursor_file: Path.join(dir, "discord.cursor")
+      )
+
+      # No token: not connected, so no tab until demo data is asked for.
+      Application.put_env(:smm_monitor, :credentials, [])
+      Application.put_env(:smm_monitor, :mock_platforms, discord: false)
+      owner = Ecto.Adapters.SQL.Sandbox.start_owner!(SmmMonitor.Repo, shared: true)
+
+      on_exit(fn ->
+        Ecto.Adapters.SQL.Sandbox.stop_owner(owner)
+        Enum.each(saved, fn {key, value} -> restore_env(key, value) end)
+      end)
+
+      start_supervised!({SmmMonitor.Fetchers.StreamWorker, module: SmmMonitor.Fetchers.Discord})
+      SmmMonitor.Fetchers.StreamWorker.poll_now(:discord)
+      :ok
+    end
+
+    test "is hidden, and d does nothing, without a bot token" do
+      model = Model.refresh(Model.new())
+
+      refute :discord in model.tabs
+      assert Model.handle_key(model, {:char, ?d}).tab == :all
+    end
+
+    test "is selected with d once it is showing data" do
+      Application.put_env(:smm_monitor, :mock_platforms, discord: true)
+      SmmMonitor.Fetchers.StreamWorker.poll_now(:discord)
+
+      model = Model.refresh(Model.new())
+      assert :discord in model.tabs
+      assert Model.handle_key(model, {:char, ?d}).tab == :discord
+    end
+
+    test "d on the config screen still removes a client rather than opening Discord" do
+      Application.put_env(:smm_monitor, :mock_platforms, discord: true)
+      SmmMonitor.Fetchers.StreamWorker.poll_now(:discord)
+
+      model = Model.refresh(Model.new()) |> Model.handle_key({:char, ?c})
+      model = Model.handle_key(model, {:char, ?d})
+
+      assert model.tab == :config
+      assert model.confirm_remove != nil
+    end
+  end
+
   defp restore_env(key, nil), do: Application.delete_env(:smm_monitor, key)
   defp restore_env(key, value), do: Application.put_env(:smm_monitor, key, value)
 end

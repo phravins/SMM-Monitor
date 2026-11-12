@@ -89,7 +89,7 @@ defmodule SmmMonitor.TUI.Model do
 
   @type t :: %__MODULE__{}
 
-  # Tab shortcuts: a for all, t/i/r/y/b for the platforms, c for config.
+  # Tab shortcuts: a for all, t/i/r/y/b/d for the platforms, c for config.
   # Digits are taken (they pick a client), so platforms past these get
   # letters too, and the left and right arrows step through every tab.
   @tab_keys %{
@@ -99,6 +99,7 @@ defmodule SmmMonitor.TUI.Model do
     ?r => :reddit,
     ?y => :youtube,
     ?b => :bluesky,
+    ?d => :discord,
     ?h => :trends,
     ?c => :config
   }
@@ -234,6 +235,14 @@ defmodule SmmMonitor.TUI.Model do
   def handle_key(%__MODULE__{tab: :config} = model, {:char, ?h}), do: move_field(model, -1)
   def handle_key(%__MODULE__{tab: :config} = model, {:char, ?l}), do: move_field(model, 1)
 
+  # `d` asks the first time and confirms the second, so a client and its
+  # mentions can't be lost to one keystroke. Elsewhere `d` opens Discord;
+  # like `h`, the shortcut yields on the config screen.
+  def handle_key(%__MODULE__{tab: :config, confirm_remove: nil} = model, {:char, ?d}),
+    do: request_remove(model)
+
+  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?d}), do: confirm_remove(model)
+
   def handle_key(%__MODULE__{} = model, {:char, char}) when is_map_key(@tab_keys, char) do
     select_tab(model, @tab_keys[char])
   end
@@ -286,13 +295,6 @@ defmodule SmmMonitor.TUI.Model do
   # and having to find the config screen first would be a detour through
   # a settings page to do the most client-facing thing in the app.
   def handle_key(%__MODULE__{} = model, {:char, ?R}), do: generate_report(model)
-
-  # `d` asks the first time and confirms the second, so a client and its
-  # mentions can't be lost to one keystroke.
-  def handle_key(%__MODULE__{tab: :config, confirm_remove: nil} = model, {:char, ?d}),
-    do: request_remove(model)
-
-  def handle_key(%__MODULE__{tab: :config} = model, {:char, ?d}), do: confirm_remove(model)
 
   # Any other key while a removal is pending cancels it.
   def handle_key(%__MODULE__{tab: :config, confirm_remove: id} = model, key) when not is_nil(id) do
@@ -569,6 +571,7 @@ defmodule SmmMonitor.TUI.Model do
   defp tiny_tab_label(:instagram), do: "insta"
   defp tiny_tab_label(:youtube), do: "yt"
   defp tiny_tab_label(:bluesky), do: "bsky"
+  defp tiny_tab_label(:discord), do: "disc"
   defp tiny_tab_label(tab), do: short_tab_label(tab)
 
   defp drawn_width(labels) do

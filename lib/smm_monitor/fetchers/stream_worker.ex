@@ -216,10 +216,18 @@ defmodule SmmMonitor.Fetchers.StreamWorker do
   def handle_info(:heartbeat, %State{ws: nil} = state), do: {:noreply, state}
 
   def handle_info(:heartbeat, state) do
-    {frames, platform_state} = state.module.heartbeat(state.platform_state)
-    state = %{state | platform_state: platform_state}
-    send_frames(state, frames)
-    {:noreply, schedule_heartbeat(state)}
+    state = %{state | heartbeat_timer: nil}
+
+    case state.module.heartbeat(state.platform_state) do
+      {:reconnect, platform_state} ->
+        {:noreply,
+         disconnected(%{state | platform_state: platform_state}, :heartbeat_not_acknowledged)}
+
+      {frames, platform_state} ->
+        state = %{state | platform_state: platform_state}
+        send_frames(state, frames)
+        {:noreply, schedule_heartbeat(state)}
+    end
   end
 
   def handle_info(:mock_round, state) do
@@ -255,7 +263,7 @@ defmodule SmmMonitor.Fetchers.StreamWorker do
 
   def handle_info({closed, socket}, %State{ws: %{socket: socket}} = state)
       when closed in [:ssl_closed, :tcp_closed] do
-    {:noreply, disconnected(state, :closed_by_server)}
+    {:noreply, server_closed(state, nil, :closed_by_server)}
   end
 
   def handle_info({error, socket, reason}, %State{ws: %{socket: socket}} = state)
@@ -308,7 +316,8 @@ defmodule SmmMonitor.Fetchers.StreamWorker do
         state |> disconnected(:idle_timeout)
 
       state.connection == :connected ->
-        %{state | platform_state: state.module.tick(state.platform_state)}
+        {posts, platform_state} = state.module.tick(state.platform_state)
+        buffer_posts(%{state | platform_state: platform_state}, posts)
 
       true ->
         state
@@ -364,6 +373,7 @@ defmodule SmmMonitor.Fetchers.StreamWorker do
     case state.module.url(context, state.platform_state) do
       {:ok, url} ->
         headers = state.module.headers(state.platform_state)
+        max_bytes = state.module.max_message_bytes()
         owner = self()
         tag = make_ref()
 
@@ -372,7 +382,8 @@ defmodule SmmMonitor.Fetchers.StreamWorker do
         {_pid, monitor} =
           spawn_monitor(fn ->
             result =
-              with {:ok, ws} <- WebSocket.connect(url, headers: headers),
+              with {:ok, ws} <-
+                     WebSocket.connect(url, headers: headers, max_message_bytes: max_bytes),
                    :ok <- WebSocket.controlling_process(ws, owner) do
                 {:ok, ws}
               end
@@ -456,7 +467,7 @@ defmodule SmmMonitor.Fetchers.StreamWorker do
   end
 
   defp handle_ws_message({:close, code, _reason}, state) do
-    {:halt, disconnected(state, {:closed_by_server, code})}
+    {:halt, server_closed(state, code, {:closed_by_server, code})}
   end
 
   # Binary frames, pings and pongs: the socket layer already answered
@@ -470,6 +481,7 @@ defmodule SmmMonitor.Fetchers.StreamWorker do
       {:ok, posts, frames, platform_state} ->
         state = %{state | platform_state: platform_state}
         send_frames(state, frames)
+        state = if state.heartbeat_timer, do: state, else: schedule_heartbeat(state)
         {:cont, buffer_posts(state, posts)}
 
       {:reconnect, platform_state} ->
@@ -477,6 +489,18 @@ defmodule SmmMonitor.Fetchers.StreamWorker do
 
       {:stop, reason, platform_state} ->
         {:halt, stopped(%{state | platform_state: platform_state}, reason)}
+    end
+  end
+
+  # The platform decides whether a close is worth retrying: Discord's
+  # "bad token" code is not.
+  defp server_closed(state, code, reason) do
+    case state.module.handle_close(code, state.platform_state) do
+      {:reconnect, platform_state} ->
+        disconnected(%{state | platform_state: platform_state}, reason)
+
+      {:stop, stop_reason, platform_state} ->
+        stopped(%{state | platform_state: platform_state}, stop_reason)
     end
   end
 
@@ -534,7 +558,8 @@ defmodule SmmMonitor.Fetchers.StreamWorker do
   defp close_socket(%State{ws: nil} = state), do: cancel(state, :heartbeat_timer)
 
   defp close_socket(state) do
-    WebSocket.close(state.ws)
+    # Asked before on_disconnect/1, which may forget what the code depends on.
+    WebSocket.close(state.ws, state.module.close_code(state.platform_state))
     platform_state = state.module.on_disconnect(state.platform_state)
     cancel(%{state | ws: nil, platform_state: platform_state}, :heartbeat_timer)
   end

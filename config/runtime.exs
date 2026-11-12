@@ -103,6 +103,24 @@ defmodule SmmMonitor.RuntimeConfig do
         |> Enum.reject(&(&1 == ""))
     end
   end
+
+  @doc """
+  Reads a comma-separated list of Discord ids (snowflakes). A typo would
+  otherwise silently match nothing, so a bad id stops the boot by name.
+  """
+  def snowflakes(var) do
+    ids = list(var, [])
+
+    case Enum.reject(ids, &Regex.match?(~r/\A\d{1,20}\z/, &1)) do
+      [] ->
+        ids
+
+      bad ->
+        raise ArgumentError,
+              "#{var} must be a comma-separated list of numeric Discord ids, " <>
+                "got #{Enum.map_join(bad, ", ", &inspect/1)}"
+    end
+  end
 end
 
 alias SmmMonitor.RuntimeConfig, as: RC
@@ -200,7 +218,8 @@ config :smm_monitor, :mock_platforms,
   youtube: RC.bool_or_nil("SMM_MOCK_YOUTUBE"),
   twitter: RC.bool_or_nil("SMM_MOCK_TWITTER"),
   instagram: RC.bool_or_nil("SMM_MOCK_INSTAGRAM"),
-  bluesky: RC.bool_or_nil("SMM_MOCK_BLUESKY")
+  bluesky: RC.bool_or_nil("SMM_MOCK_BLUESKY"),
+  discord: RC.bool_or_nil("SMM_MOCK_DISCORD")
 
 # YouTube polls on its own schedule because of the API's daily quota.
 # See the README for the arithmetic behind picking a value.
@@ -262,6 +281,14 @@ config :smm_monitor, SmmMonitor.Fetchers.Bluesky,
   enabled: RC.bool("SMM_BLUESKY_ENABLED", false),
   jetstream_url: RC.wss_url_or_nil("SMM_BLUESKY_JETSTREAM_URL")
 
+# Discord reads the servers its bot has been invited to; it needs
+# DISCORD_BOT_TOKEN (below). These narrow where it listens: when either
+# is set, only those servers, and those channels and their threads.
+# See docs/platforms.md#discord.
+config :smm_monitor, SmmMonitor.Fetchers.Discord,
+  guilds: RC.snowflakes("SMM_DISCORD_GUILDS"),
+  channels: RC.snowflakes("SMM_DISCORD_CHANNELS")
+
 # API credentials. Read from the environment, never committed. See
 # docs/platforms.md. Keys typed into the setup wizard are stored in
 # settings.json instead and merged in at boot; a value set here wins.
@@ -283,6 +310,9 @@ credentials = [
     # accepted so an existing env file keeps working.
     business_account_id:
       System.get_env("INSTAGRAM_BUSINESS_ACCOUNT_ID") || System.get_env("INSTAGRAM_USER_ID")
+  ],
+  discord: [
+    bot_token: System.get_env("DISCORD_BOT_TOKEN")
   ]
 ]
 
