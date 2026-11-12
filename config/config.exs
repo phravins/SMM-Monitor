@@ -42,7 +42,8 @@ config :smm_monitor,
   # Loopback only unless SMM_SSH_BIND says otherwise.
   ssh_bind: "127.0.0.1"
 
-# One entry per platform worker. `module` implements SmmMonitor.Fetchers.Fetcher.
+# One entry per platform worker. `module` implements SmmMonitor.Fetchers.Fetcher,
+# or SmmMonitor.Fetchers.Stream for `kind: :stream` platforms.
 # Adding a platform is a matter of writing the module and adding a line here.
 config :smm_monitor, :platforms,
   reddit: [module: SmmMonitor.Fetchers.Reddit, enabled: true, opts: []],
@@ -71,6 +72,16 @@ config :smm_monitor, :platforms,
     # Several requests per poll against Meta's hourly allowance, and the
     # edges it reads move slowly. Every 15 minutes is plenty.
     interval_ms: :timer.minutes(15),
+    opts: []
+  ],
+  # Not polled: one WebSocket that receives every new Bluesky post as it
+  # is written. Collects nothing until SMM_BLUESKY_ENABLED=true.
+  # Its tab appears once it is switched on (`tab: :when_on`).
+  bluesky: [
+    module: SmmMonitor.Fetchers.Bluesky,
+    kind: :stream,
+    enabled: true,
+    tab: :when_on,
     opts: []
   ]
 

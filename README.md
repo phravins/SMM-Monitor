@@ -32,22 +32,25 @@ sentiment summary and a table of recent mentions](docs/images/dashboard.png)
 ## How it works
 
 ```text
-  Reddit     YouTube     X (Twitter)     Instagram         official APIs, your keys
-     │          │             │              │
-     └──────────┴──────┬──────┴──────────────┘
-                       ▼
-          one poller per platform               asks each API every 30 s to 18 min,
-                       │                        within its rate limits and quotas
-                       ▼
-          clean · score sentiment · de-duplicate
-                       │
-          ┌────────────┴─────────────┐
-          ▼                          ▼
-   in-memory view              SQLite database           30 days of history
-          │                          │
-          ├─▶ dashboard (this terminal, or over SSH)
-          ├─▶ alerts (log, Slack)
-          └─▶ trends and reports (CSV, PDF)
+  Reddit   YouTube   X (Twitter)   Instagram         Bluesky
+     │        │          │            │                 │
+     └────────┴─────┬────┴────────────┘                 │
+                    ▼                                   ▼
+       one poller per platform            one live stream, matched
+       (asks every 30 s to 18 min,        against brand terms as
+        within rate limits and quotas)    posts are written
+                    │                                   │
+                    └─────────────────┬─────────────────┘
+                                      ▼
+                   clean · score sentiment · de-duplicate
+                                      │
+                         ┌────────────┴────────────┐
+                         ▼                         ▼
+                  in-memory view            SQLite database   30 days of history
+                         │                         │
+                         ├─▶ dashboard (this terminal, or over SSH)
+                         ├─▶ alerts (log, Slack)
+                         └─▶ trends and reports (CSV, PDF)
 ```
 
 - **Clients.** You monitor *clients*, not loose keywords. Each client
@@ -58,12 +61,16 @@ sentiment summary and a table of recent mentions](docs/images/dashboard.png)
   every 30 seconds, X every 5 minutes, Instagram every 15 and YouTube
   every 18. The intervals are set by what each API allows for free, or
   for what you pay.
+- **Streaming.** Bluesky is not polled. One connection stays open and
+  receives every new post on the network as it is written; posts that
+  name a client's brand are stored within a second or two.
 - **Sentiment.** Every post gets a score from −1.0 to 1.0 from a word
   list. That is fast and needs no external service, but it can be
   fooled by sarcasm. See [docs/sentiment.md](docs/sentiment.md).
 - **Storage.** Mentions are kept in a SQLite file on your machine for
   30 days by default. Nothing is sent anywhere except to the platform
-  APIs and, if you set one up, your Slack webhook.
+  APIs and, if you set one up, your Slack webhook. Bluesky is never told
+  your brand terms: its posts are matched on your machine.
 
 **Is the data real?** The top line of every screen ends with one word:
 
@@ -226,7 +233,8 @@ readable only by you. On a server the setup is skipped automatically.
 ## Connecting your platforms
 
 A platform starts collecting as soon as it has credentials. Without them
-it shows as not connected and collects nothing.
+it shows as not connected and collects nothing. Bluesky needs no
+credentials, only switching on.
 
 | Platform | Cost | How to connect | What it can find |
 | --- | --- | --- | --- |
@@ -234,6 +242,7 @@ it shows as not connected and collects nothing.
 | **YouTube** | Free (daily quota) | Setup wizard, or `YOUTUBE_API_KEY` | Videos whose title or description matches |
 | **X (Twitter)** | Paid API plan | `TWITTER_BEARER_TOKEN` | Posts from the last 7 days that match |
 | **Instagram** | Business account | `INSTAGRAM_ACCESS_TOKEN` and `INSTAGRAM_BUSINESS_ACCOUNT_ID` | Only posts that tag your account, comments on your own posts and, optionally, hashtags. Instagram has **no keyword search** |
+| **Bluesky** | Free, no account | `SMM_BLUESKY_ENABLED=true` | Every new public post that names the brand, about a second after it is written. Off by default because the stream downloads all of Bluesky around the clock |
 
 **Start with Reddit:** it is free and takes about three minutes.
 
@@ -246,7 +255,7 @@ it shows as not connected and collects nothing.
 
 The header changes to `LIVE` within a few seconds.
 
-Step-by-step guides for all four platforms, including quotas and what
+Step-by-step guides for every platform, including quotas and what
 each one can and cannot see, are in
 **[docs/platforms.md](docs/platforms.md)**. Environment variables always
 win over keys typed into the wizard. You no longer need any
@@ -262,6 +271,8 @@ win over keys typed into the wizard. You no longer need any
 | `1`–`9` | Jump to that client |
 | `a` | All of this client's platforms |
 | `r` `y` `t` `i` | Reddit · YouTube · Twitter/X · Instagram only |
+| `b` | Bluesky only (its tab appears once it is switched on) |
+| `←` / `→` | Previous / next tab |
 | `j` / `k`, `↓` / `↑` | Scroll the mentions table |
 | `PgDn` / `PgUp` | Scroll a page at a time |
 | `g` / `Home` | Back to the newest mention |
@@ -321,6 +332,9 @@ youtube       live · 4m ago · next 14m
 twitter       unconfigured
 ```
 
+Bluesky shows `stream` while connected, `reconnecting` while it waits to
+try again, and `idle` when there is no client to match for.
+
 If a platform's last good fetch is more than three intervals old, it is
 marked **`stale`**. That usually means a wrong or expired key, a spent
 quota, or no network. A platform whose last poll failed shows `error`.
@@ -332,6 +346,7 @@ quota, or no network. A platform whose last poll failed shows `error`.
 | X | 5 minutes | Monthly post cap | `SMM_TWITTER_POLL_INTERVAL_MS` |
 | Instagram | 15 minutes | Meta's hourly allowance | `SMM_INSTAGRAM_POLL_INTERVAL_MS` |
 | YouTube | 18 minutes | 10,000 free quota units a day, 100 per search | `SMM_YOUTUBE_POLL_INTERVAL_MS` |
+| Bluesky | Live (about 1 s) | Posts are pushed as they are written; stale after 90 s of silence | — |
 
 Each poll asks only for recent posts (the last day on Reddit and
 YouTube), and anything already seen is skipped, so a post appears once.

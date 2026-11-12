@@ -61,6 +61,23 @@
   count here is our own estimate against a conservative budget — it
   can't see other apps sharing the Project. Check `GET /2/usage/tweets`
   for the real figure.
+* **Bluesky only sees posts made while it is connected**, plus up to an
+  hour of catch-up after a restart or outage (Jetstream's replay, from
+  the saved cursor). A gap longer than that is lost; there is no search
+  to backfill it. Switching Bluesky on does not fetch anything older
+  than the moment it connects.
+* Bluesky receives **every post on the network** and throws away the
+  ones that don't match. The bandwidth this uses has not been measured
+  for this release; expect a steady stream rather than occasional
+  requests, and check it before turning Bluesky on over a metered
+  connection.
+* Bluesky matching is **whole words only**: "acme" matches "Acme's new
+  app" but not "acmecorp" or "#acmecorp". Add those as brand terms if
+  they matter. Case is ignored; accents are not, so "cafe" does not
+  match "café".
+* A Bluesky author shows as their DID (`did:plc:...`) when the public
+  profile lookup fails or times out; the handle is not filled in later
+  for mentions already stored.
 * SSH access has no rate limiting or audit trail beyond one log line per
   connection — run it behind a VPN or firewall rather than exposed.
 * Remote sessions are read-only; there's no per-user permission model,

@@ -49,6 +49,15 @@ connected. Walkthroughs for getting each one are in
 | `INSTAGRAM_ACCESS_TOKEN` | Instagram | Long-lived token; expires after 60 days |
 | `INSTAGRAM_BUSINESS_ACCOUNT_ID` | Instagram | The 17-digit account id. `INSTAGRAM_USER_ID` is accepted as an older name |
 
+Bluesky needs no credentials. It is switched on with a setting, because
+its stream uses bandwidth around the clock
+([platforms.md](platforms.md#bluesky)):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SMM_BLUESKY_ENABLED` | `false` | `true` connects to Bluesky's Jetstream and matches every new post against your clients' brand terms |
+| `SMM_BLUESKY_JETSTREAM_URL` | `wss://jetstream2.us-east.bsky.network/subscribe` | A different Jetstream server, including one you run. Must be `wss://` |
+
 ## Polling and platform limits
 
 | Variable | Default | Meaning |
@@ -85,6 +94,9 @@ before adding many clients.
 | `SMM_HISTORY_LIMIT` | `200` | Mentions per platform loaded back into the dashboard on start |
 | `SMM_SETTINGS_FILE` | `~/.config/smm_monitor/settings.json` | The setup wizard's saved answers |
 | `SMM_SETUP_COMPLETE` | unset | Set to `1` to skip the setup wizard (servers, scripts) |
+
+Bluesky's stream position is saved as `bluesky.cursor` in the same
+directory as the database, so a restart carries on where it left off.
 
 `~/.config` and `~/.local/share` follow `XDG_CONFIG_HOME` and
 `XDG_DATA_HOME` when they are set. Under systemd, the defaults are
@@ -143,7 +155,7 @@ SSH needs a patched Erlang/OTP runtime. See [ssh.md](ssh.md).
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SMM_DEMO` | unset | Set to `1` to show invented sample mentions everywhere. The header then says `DEMO DATA`. `SMM_MOCK_MODE=true` is the older spelling |
-| `SMM_MOCK_REDDIT`, `SMM_MOCK_YOUTUBE`, `SMM_MOCK_TWITTER`, `SMM_MOCK_INSTAGRAM` | unset | `true` forces demo data on that one platform, even with credentials. You never need `false`: credentials alone make a platform live |
+| `SMM_MOCK_REDDIT`, `SMM_MOCK_YOUTUBE`, `SMM_MOCK_TWITTER`, `SMM_MOCK_INSTAGRAM`, `SMM_MOCK_BLUESKY` | unset | `true` forces demo data on that one platform, even with credentials. You never need `false`: credentials alone make a platform live |
 | `SMM_TUI` | on in the downloaded binary, off otherwise | `1` draws the dashboard in this terminal (`SMM_TUI=1 mix run --no-halt`, or a release started with `bin/smm_monitor start`). `0` runs headless: collecting, alerting and serving SSH only |
 
 Application config keys (for `config/*.exs`) are listed in

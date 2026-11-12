@@ -41,7 +41,12 @@ defmodule SmmMonitor.RuntimeConfig do
   the alert payload carries client names, so it must never go out in
   clear text or to something that is not a host.
   """
-  def https_url_or_nil(var) do
+  def https_url_or_nil(var), do: url_or_nil(var, "https")
+
+  @doc "Reads a WebSocket URL, refusing anything that is not `wss://host/...`."
+  def wss_url_or_nil(var), do: url_or_nil(var, "wss")
+
+  defp url_or_nil(var, scheme) do
     case System.get_env(var) do
       nil ->
         nil
@@ -51,11 +56,11 @@ defmodule SmmMonitor.RuntimeConfig do
 
       value ->
         case URI.new(String.trim(value)) do
-          {:ok, %URI{scheme: "https", host: host}} when is_binary(host) and host != "" ->
+          {:ok, %URI{scheme: ^scheme, host: host}} when is_binary(host) and host != "" ->
             String.trim(value)
 
           _other ->
-            raise ArgumentError, "#{var} must be an https:// URL"
+            raise ArgumentError, "#{var} must be a #{scheme}:// URL"
         end
     end
   end
@@ -194,7 +199,8 @@ config :smm_monitor, :mock_platforms,
   reddit: RC.bool_or_nil("SMM_MOCK_REDDIT"),
   youtube: RC.bool_or_nil("SMM_MOCK_YOUTUBE"),
   twitter: RC.bool_or_nil("SMM_MOCK_TWITTER"),
-  instagram: RC.bool_or_nil("SMM_MOCK_INSTAGRAM")
+  instagram: RC.bool_or_nil("SMM_MOCK_INSTAGRAM"),
+  bluesky: RC.bool_or_nil("SMM_MOCK_BLUESKY")
 
 # YouTube polls on its own schedule because of the API's daily quota.
 # See the README for the arithmetic behind picking a value.
@@ -247,6 +253,14 @@ if subreddits = System.get_env("SMM_REDDIT_SUBREDDITS") do
     subreddits:
       subreddits |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
 end
+
+# Bluesky streams every new post on the network through Jetstream and
+# keeps the ones that mention a client. It needs no account, but it uses
+# bandwidth around the clock, so it is off until switched on.
+# See docs/platforms.md#bluesky.
+config :smm_monitor, SmmMonitor.Fetchers.Bluesky,
+  enabled: RC.bool("SMM_BLUESKY_ENABLED", false),
+  jetstream_url: RC.wss_url_or_nil("SMM_BLUESKY_JETSTREAM_URL")
 
 # API credentials. Read from the environment, never committed. See
 # docs/platforms.md. Keys typed into the setup wizard are stored in

@@ -13,8 +13,6 @@ defmodule SmmMonitor.Fetchers.PlatformSupervisor do
 
   use Supervisor
 
-  alias SmmMonitor.Fetchers.Worker
-
   @max_restarts 10
   @max_seconds 60
 
@@ -45,8 +43,11 @@ defmodule SmmMonitor.Fetchers.PlatformSupervisor do
 
   @impl true
   def init(opts) do
+    # :poll runs the timer-driven Worker, :stream the WebSocket one.
+    worker = SmmMonitor.Fetchers.worker(Keyword.get(opts, :kind, :poll))
+
     children = [
-      {Worker,
+      {worker,
        module: Keyword.fetch!(opts, :module),
        opts: Keyword.get(opts, :opts, []),
        interval_ms: Keyword.get(opts, :interval_ms, SmmMonitor.config(:poll_interval_ms, 30_000))}

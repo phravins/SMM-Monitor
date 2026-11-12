@@ -6,10 +6,12 @@ defmodule SmmMonitor.Fetchers.Supervisor do
       ├── PlatformSupervisor(:reddit)    → Worker(:reddit)
       ├── PlatformSupervisor(:youtube)   → Worker(:youtube)
       ├── PlatformSupervisor(:twitter)   → Worker(:twitter)
-      └── PlatformSupervisor(:instagram) → Worker(:instagram)
+      ├── PlatformSupervisor(:instagram) → Worker(:instagram)
+      └── PlatformSupervisor(:bluesky)   → StreamWorker(:bluesky)
 
   Children come from `config :smm_monitor, :platforms`, so adding a platform
-  never means touching this module.
+  never means touching this module. A platform's `:kind` picks its worker:
+  `:poll` (the default) or `:stream`.
   """
 
   use Supervisor
@@ -38,6 +40,7 @@ defmodule SmmMonitor.Fetchers.Supervisor do
        [
          platform: platform,
          module: Keyword.fetch!(opts, :module),
+         kind: Keyword.get(opts, :kind, :poll),
          opts: Keyword.get(opts, :opts, [])
        ] ++ interval_option(opts)}
     end)

@@ -271,7 +271,14 @@ defmodule SmmMonitor.TUI.Renderers.Common do
             text(content: "r", color: @accent, attributes: @bold)
             text(content: "eddit ")
             text(content: "y", color: @accent, attributes: @bold)
-            text(content: "outube · ")
+            text(content: "outube ")
+
+            if :bluesky in model.tabs do
+              [text(content: "b", color: @accent, attributes: @bold), text(content: "luesky ")]
+            end
+
+            text(content: "←/→", color: @accent, attributes: @bold)
+            text(content: " · ")
             text(content: "c", color: @accent, attributes: @bold)
             text(content: "lients · ")
             text(content: "h", color: @accent, attributes: @bold)
@@ -852,6 +859,10 @@ defmodule SmmMonitor.TUI.Renderers.Common do
       defp next_poll_label(nil), do: ""
       defp next_poll_label(next), do: " · next #{next}"
 
+      defp mode_colour(%{transport: :stream, mode: :live, connection: connection})
+           when connection != :connected,
+           do: @accent
+
       defp mode_colour(%{mode: :live}), do: @positive
       defp mode_colour(%{mode: :down}), do: @negative
       defp mode_colour(_status), do: @accent
@@ -973,8 +984,18 @@ defmodule SmmMonitor.TUI.Renderers.Common do
       end
 
       defp worker_state(%{mode: :down}), do: "restarting"
+
+      # A stream's connection says more than its last error: "reconnecting"
+      # is the honest word while it is getting back on its feet.
+      defp worker_state(%{transport: :stream, mode: :live, connection: connection}),
+        do: stream_state(connection)
+
       defp worker_state(%{last_error: error}) when not is_nil(error), do: "error"
       defp worker_state(%{mode: mode}), do: to_string(mode)
+
+      defp stream_state(:connected), do: "stream"
+      defp stream_state(:idle), do: "idle"
+      defp stream_state(other), do: to_string(other)
 
       defp mode_color(true), do: @accent
       defp mode_color(false), do: @positive

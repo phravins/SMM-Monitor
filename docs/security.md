@@ -37,7 +37,9 @@ And what SMM Monitor reads that it should **not** trust:
   permissions is tightened when it is loaded.
 * Crash reports and process inspection redact credentials: the Reddit
   token struct hides its token, and the poller's state is scrubbed
-  before it is logged.
+  before it is logged. The stream worker (Bluesky) does the same: its
+  platform state shows as `redacted` in crash reports and `:sys`
+  inspection.
 * HTTP error responses are shortened before they are logged, so an API
   that echoes your request back does not put a key in the log.
 * Slack webhook URLs are shown masked on the clients screen (host plus
@@ -45,6 +47,24 @@ And what SMM Monitor reads that it should **not** trust:
   `not set`.
 * The database, reports and their directories are created readable only
   by the user SMM Monitor runs as. The systemd unit adds `UMask=0077`.
+  Bluesky's resume position (`bluesky.cursor`, next to the database) is
+  written `0600` through a temporary file and a rename.
+
+### Streaming connections (Bluesky)
+
+* `wss://` connections check the server's certificate against the
+  system CA store and check that it matches the host name. Plain
+  `ws://` is refused unless the host is the local machine, so a
+  mistyped `SMM_BLUESKY_JETSTREAM_URL` cannot send traffic in the clear.
+* A single message is capped at **1 MB**, and a frame over the cap is
+  refused from its header alone, before any of it is read into memory.
+  The server's handshake response is capped at **16 KB**. Either one
+  closes the connection and it is reopened with back-off.
+* The connection only *receives*. Bluesky is never told the brand terms:
+  every post on the network arrives and is matched locally, so no
+  third party learns which brands you watch. The only outgoing request
+  is the public profile lookup that turns an author's DID into a
+  handle, and it carries author ids only.
 
 ### Remote access (SSH)
 
@@ -77,6 +97,10 @@ Details: [ssh.md](ssh.md).
   running them as formulas.
 * Reddit links always point at `https://www.reddit.com` plus the post's
   permalink, never at whatever external link the post carries.
+* Bluesky links are built from the post's author id and record key,
+  both checked against a strict pattern first, and always point at
+  `https://bsky.app`. Handles from the network are checked the same way
+  before they are shown; one that fails is replaced by the author id.
 * Values read back from the database are matched against a fixed list
   rather than turned into new atoms, so stored data cannot exhaust the
   Erlang atom table.
@@ -136,8 +160,9 @@ These were found in the same audit and are not fixed yet:
 * **SSH sessions accept environment variables** sent by the client
   (inherited from the SSH library). They do not affect the dashboard,
   but they are not refused either.
-* **No limit on API response size.** A very large response from a
-  platform is read in full.
+* **No limit on API response size for polled platforms.** A very large
+  HTTP response from Reddit, YouTube, X or Instagram is read in full.
+  Streaming connections are capped (see above).
 * **The cross-compiler wrapper used for release builds** (`burrito-cc`)
   builds a command with `eval`. It only ever sees arguments from the
   build itself, never user input.

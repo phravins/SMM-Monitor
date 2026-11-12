@@ -2,10 +2,11 @@
 
 [← Back to the README](../README.md)
 
-SMM Monitor collects from four platforms. Each one is switched on by
-giving it credentials. **A platform with credentials collects live data;
-a platform without them collects nothing** and shows as not connected.
-Nothing is invented unless you ask for demo data with `SMM_DEMO=1`.
+SMM Monitor collects from five platforms. Four are switched on by
+giving them credentials; Bluesky needs no account and is switched on
+with one setting. **A platform that is switched on collects live data;
+one that is not collects nothing** and shows as not connected. Nothing
+is invented unless you ask for demo data with `SMM_DEMO=1`.
 
 | Platform | Cost | Set up from | What it can actually find |
 | --- | --- | --- | --- |
@@ -13,6 +14,7 @@ Nothing is invented unless you ask for demo data with `SMM_DEMO=1`.
 | **YouTube** | Free daily quota | Setup wizard or environment | Public videos matching your brand terms |
 | **X (Twitter)** | Paid API plan | Environment | Recent public posts matching your brand terms (last 7 days) |
 | **Instagram** | Business account | Environment | Only your own account's surroundings — [see below](#what-instagram-monitoring-can-and-cannot-see) |
+| **Bluesky** | Free, no account | Environment (`SMM_BLUESKY_ENABLED=true`) | Every new public post that names your brand, within a second or two — [see below](#bluesky) |
 
 **Start with Reddit.** It is free, it takes about three minutes, and it
 behaves most like what people expect the whole app to do.
@@ -484,9 +486,98 @@ is logged and the others still return mentions. Only a poll where every
 source failed counts as an error.
 
 
+## Bluesky
+
+Bluesky is the one platform that is **pushed, not polled**. Instead of
+asking every few minutes "anything new?", SMM Monitor keeps one
+connection open to **Jetstream**, a public service run by Bluesky that
+sends every new post on the network as it is written. Each post is
+checked against every client's brand terms as it arrives; the ones that
+match are stored, and everything else is thrown away unread. A mention
+is usually on screen a second or two after it was posted.
+
+It needs **no account, no app and no API key**.
+
+### Switching Bluesky on
+
+```sh
+SMM_BLUESKY_ENABLED=true
+```
+
+Restart, and a **Bluesky** tab appears (or press `b`). The footer shows
+`bluesky:stream` while connected. It is off by default for one reason:
+
+> **It downloads every post on Bluesky, all day.** The stream carries
+> the whole network whether or not anything matches, so the bandwidth
+> is steady and does not depend on how many clients you have. That is
+> unnoticeable on a server or office line, but worth thinking about on
+> a metered or mobile connection. The exact figure varies with how busy
+> Bluesky is and has not been measured for this release.
+
+With no client set up, nothing would be matched, so it does not
+connect at all until there is one.
+
+### Choosing a Jetstream server
+
+The default is `wss://jetstream2.us-east.bsky.network/subscribe`.
+Bluesky runs a few others (`jetstream1.us-east`, `jetstream1.us-west`,
+`jetstream2.us-west`), and you can [run your own](https://github.com/bluesky-social/jetstream):
+
+```sh
+SMM_BLUESKY_JETSTREAM_URL=wss://jetstream1.us-west.bsky.network/subscribe
+```
+
+It must be `wss://`; an unencrypted `ws://` address is refused.
+
+### How Bluesky matching works
+
+The stream sends posts, not search results, so the app decides itself
+which client a post is about. A brand term matches as a **whole word or
+phrase**, ignoring case (accented capitals included) but not accents:
+
+| Term | Matches | Does not match |
+| --- | --- | --- |
+| `realoffice` | `RealOffice`, `#realoffice`, `@realoffice`, `RealOffice's` | `surrealofficer`, `realoffices` |
+| `real office` | `real office`, `Real  Office`, a line break between the words | `realoffice` |
+| `café été` | `CAFÉ ÉTÉ` | `cafe ete` (accents count) |
+
+A post that names two clients is stored once for each, as on the other
+platforms. Editing a client's terms takes effect within five seconds,
+without reconnecting.
+
+### Downtime and restarts
+
+Every message carries the time Jetstream saw it. The latest one is
+saved every 10 seconds to `bluesky.cursor`, next to the database. On a
+reconnect or a restart the app asks Jetstream to replay from a few
+seconds before that point, so a dropped connection or a short outage
+loses nothing. The replay goes back **at most an hour**; after a longer
+outage it picks up from an hour ago. Posts seen twice are stored once.
+
+A connection that drops is retried after 1, 2, 4 ... up to 60 seconds.
+A connection that stays open but goes silent for a minute is treated
+as stalled and replaced.
+
+### Who wrote it
+
+The stream names authors by an account id (`did:plc:...`), not a
+handle. When matched posts are stored, the ids not seen before are
+looked up in one request to Bluesky's public profile service and shown
+as `@handle`. If that lookup fails, the id is shown instead and nothing
+else is affected.
+
+### What Bluesky gets asked
+
+One WebSocket to the Jetstream server, asking only for
+`app.bsky.feed.post` and, after the first connection, a `cursor`. Then,
+for each batch of matched posts with authors not yet known, one
+`GET https://public.api.bsky.app/xrpc/app.bsky.actor.getProfiles` for up
+to 25 of them. Nothing about your clients or brand terms is sent to
+Bluesky: matching happens on your machine.
+
 ## What each platform actually gives you
 
-All four platforms run on live APIs. What differs is **how much of the platform each
+All five platforms run on live APIs. What differs is **how much of the platform each
 one can see**, which matters more than whether the code is written:
 
 | Platform | Coverage | How it works |
@@ -495,6 +586,7 @@ one can see**, which matters more than whether the code is written:
 | **YouTube** | **Platform-wide search** of video titles and descriptions. Comments are not searched — see below. | Data API v3 `search.list` with an API key. Daily quota tracked against a budget; stands down when spent. Free tier. |
 | **Twitter/X** | **Platform-wide search**, last 7 days, retweets excluded. | v2 `/2/tweets/search/recent` with an app-only bearer token. Two limits tracked separately: the 15-minute window from headers, the monthly post cap locally. **Paid tier required.** |
 | **Instagram** | **Not brand-wide.** Only posts that tag your account, comments on your own posts, and (opt-in) public posts carrying a tracked hashtag. | Graph API, scoped to one Business account. The Graph API has no keyword search at any tier — see [What Instagram monitoring can and cannot see](#what-instagram-monitoring-can-and-cannot-see). |
+| **Bluesky** | **Everything new, as it is posted.** Every public post from the moment of connecting (and up to an hour back after downtime). No search of older posts. | Jetstream WebSocket, matched locally against brand terms. No account. Off by default because of the steady bandwidth. |
 
 Every platform independently collects nothing when its credentials are
 missing, and says so in the log. So a half-configured install shows real
@@ -503,8 +595,8 @@ never next to invented Instagram data, which would look exactly like the
 real thing. `SMM_DEMO=1` serves fixtures everywhere when that is what
 you actually want.
 
-**Coverage is uneven, on purpose.** Reddit, YouTube and X answer "who
-mentioned us anywhere?"; Instagram answers "who tagged us, and what did
+**Coverage is uneven, on purpose.** Reddit, YouTube, X and Bluesky
+answer "who mentioned us anywhere?"; Instagram answers "who tagged us, and what did
 people say on our own posts?". A quiet Instagram tab does not mean
 nobody is talking about the brand there.
 
