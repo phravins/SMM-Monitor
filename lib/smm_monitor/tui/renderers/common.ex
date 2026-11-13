@@ -293,6 +293,10 @@ defmodule SmmMonitor.TUI.Renderers.Common do
               [text(content: "m", color: @accent, attributes: @bold), text(content: "astodon ")]
             end
 
+            if :news in model.tabs do
+              [text(content: "n", color: @accent, attributes: @bold), text(content: "ews ")]
+            end
+
             text(content: "←/→", color: @accent, attributes: @bold)
             text(content: " · ")
             text(content: "c", color: @accent, attributes: @bold)
@@ -664,7 +668,7 @@ defmodule SmmMonitor.TUI.Renderers.Common do
 
           label do
             text(
-              content: "  twitter, instagram, threads, mastodon: set their env vars, then restart",
+              content: "  x, instagram, threads, mastodon, news: set their env vars, then restart",
               color: @muted
             )
           end

@@ -89,7 +89,7 @@ defmodule SmmMonitor.TUI.Model do
 
   @type t :: %__MODULE__{}
 
-  # Tab shortcuts: a for all, t/i/r/y/b/d/e/m for the platforms (e for
+  # Tab shortcuts: a for all, t/i/r/y/b/d/e/m/n for the platforms (e for
   # thr*e*ads: t, h, r and a were taken), h for trends, c for config.
   # Digits are taken (they pick a client), so platforms past these get
   # letters too, and the left and right arrows step through every tab.
@@ -103,6 +103,7 @@ defmodule SmmMonitor.TUI.Model do
     ?d => :discord,
     ?e => :threads,
     ?m => :mastodon,
+    ?n => :news,
     ?h => :trends,
     ?c => :config
   }
@@ -415,8 +416,8 @@ defmodule SmmMonitor.TUI.Model do
           "",
           "Reddit takes about three minutes and searches the subreddits",
           "set for each client (all of Reddit if none are set). X,",
-          "Instagram, Threads and Mastodon are set up with environment",
-          "variables — see docs/platforms.md.",
+          "Instagram, Threads, Mastodon and news feeds are set up with",
+          "environment variables — see docs/platforms.md.",
           "",
           "Just looking around? Start it with SMM_DEMO=1 for invented",
           "data, clearly labelled DEMO DATA in the top line."

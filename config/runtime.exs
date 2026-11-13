@@ -167,6 +167,60 @@ defmodule SmmMonitor.RuntimeConfig do
   end
 
   @doc """
+  Reads the news feeds to watch: a comma-separated list in `list_var`,
+  and one URL per line in the file `file_var` names (`#` starts a
+  comment). Each must be `https://` (plain `http://` only to this
+  machine); anything else stops the boot, naming where it came from.
+  """
+  def feed_urls(list_var, file_var) do
+    from_list = Enum.map(list(list_var, []), &{list_var, &1})
+
+    from_file =
+      case System.get_env(file_var) do
+        nil ->
+          []
+
+        "" ->
+          []
+
+        path ->
+          case File.read(path) do
+            {:ok, contents} ->
+              contents
+              |> String.split(~r/\R/)
+              |> Enum.with_index(1)
+              |> Enum.map(fn {line, number} ->
+                {line |> String.replace(~r/(\A|\s)#.*\z/, "") |> String.trim(), number}
+              end)
+              |> Enum.reject(fn {line, _number} -> line == "" end)
+              |> Enum.map(fn {line, number} -> {"#{file_var} line #{number}", line} end)
+
+            {:error, reason} ->
+              raise ArgumentError,
+                    "#{file_var} names #{inspect(path)}, which cannot be read: " <>
+                      inspect(reason)
+          end
+      end
+
+    for {source, url} <- from_list ++ from_file, uniq: true do
+      case URI.new(url) do
+        {:ok, %URI{scheme: "https", host: host, userinfo: nil}}
+        when is_binary(host) and host != "" ->
+          url
+
+        {:ok, %URI{scheme: "http", host: host, userinfo: nil}}
+        when host in ["localhost", "127.0.0.1", "::1"] ->
+          url
+
+        _other ->
+          raise ArgumentError,
+                "#{source} must be an https:// feed URL with no user name or password, " <>
+                  "got #{inspect(url)}"
+      end
+    end
+  end
+
+  @doc """
   Reads a comma-separated list of Discord ids (snowflakes). A typo would
   otherwise silently match nothing, so a bad id stops the boot by name.
   """
@@ -283,7 +337,8 @@ config :smm_monitor, :mock_platforms,
   bluesky: RC.bool_or_nil("SMM_MOCK_BLUESKY"),
   discord: RC.bool_or_nil("SMM_MOCK_DISCORD"),
   threads: RC.bool_or_nil("SMM_MOCK_THREADS"),
-  mastodon: RC.bool_or_nil("SMM_MOCK_MASTODON")
+  mastodon: RC.bool_or_nil("SMM_MOCK_MASTODON"),
+  news: RC.bool_or_nil("SMM_MOCK_NEWS")
 
 # YouTube polls on its own schedule because of the API's daily quota.
 # See the README for the arithmetic behind picking a value.
@@ -394,6 +449,26 @@ config :smm_monitor, SmmMonitor.Fetchers.Mastodon,
   instance: RC.hostname_or_nil("MASTODON_INSTANCE"),
   timeline: RC.choice("SMM_MASTODON_TIMELINE", ~w(federated local), :federated),
   streaming_url: RC.wss_url_or_nil("SMM_MASTODON_STREAMING_URL")
+
+# News reads the RSS and Atom feeds listed here, and searches Google News
+# for each brand term when SMM_NEWS_SEARCH=google. Google's terms allow
+# personal, non-commercial use of its feeds. See docs/platforms.md#news.
+news_edition = System.get_env("SMM_NEWS_EDITION", "en-US")
+
+unless Regex.match?(~r/\A[A-Za-z]{2,3}[-_][A-Za-z]{2}\z/, String.trim(news_edition)) do
+  raise ArgumentError,
+        "SMM_NEWS_EDITION must be a language and country such as en-US or fr-CA, " <>
+          "got #{inspect(news_edition)}"
+end
+
+config :smm_monitor, SmmMonitor.Fetchers.News,
+  feeds: RC.feed_urls("SMM_NEWS_FEEDS", "SMM_NEWS_FEEDS_FILE"),
+  search: RC.choice("SMM_NEWS_SEARCH", ~w(off google), :off),
+  edition: String.trim(news_edition)
+
+if interval_ms = RC.integer_or_nil("SMM_NEWS_POLL_INTERVAL_MS") do
+  config :smm_monitor, :platforms, news: [interval_ms: interval_ms]
+end
 
 # API credentials. Read from the environment, never committed. See
 # docs/platforms.md. Keys typed into the setup wizard are stored in

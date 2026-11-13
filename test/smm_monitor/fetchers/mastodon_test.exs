@@ -198,10 +198,10 @@ defmodule SmmMonitor.Fetchers.MastodonTest do
     end
 
     test "HTML entities are decoded, and nonsense ones dropped" do
-      assert Mastodon.html_to_text("caf&#233; &#x1F600; &eacute; &#0; &#xD800;") ==
+      assert SmmMonitor.Text.html_to_text("caf&#233; &#x1F600; &eacute; &#0; &#xD800;") ==
                "café 😀 &eacute;"
 
-      assert Mastodon.html_to_text(nil) == ""
+      assert SmmMonitor.Text.html_to_text(nil) == ""
     end
   end
 

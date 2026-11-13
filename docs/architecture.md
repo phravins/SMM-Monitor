@@ -9,8 +9,8 @@ the tests. For running it as a service, see [DEPLOY.md](../DEPLOY.md).
 
 ```
  Reddit · YouTube · X ·               Bluesky (Jetstream) ·
-   Instagram · Threads                    Discord (Gateway) ·
-                                         Mastodon (streaming API)
+   Instagram · Threads ·                  Discord (Gateway) ·
+   News (RSS/Atom feeds)                 Mastodon (streaming API)
         (HTTPS APIs, polled)               (WebSocket, pushed)
               │                                    │
               ▼                                    ▼
@@ -51,6 +51,7 @@ SmmMonitor.Supervisor                    (one_for_one)
 │   ├── PlatformSupervisor(:twitter)   → Worker(:twitter)
 │   ├── PlatformSupervisor(:instagram) → Worker(:instagram)
 │   ├── PlatformSupervisor(:threads)   → Worker(:threads)
+│   ├── PlatformSupervisor(:news)      → Worker(:news)
 │   ├── PlatformSupervisor(:bluesky)   → StreamWorker(:bluesky)
 │   ├── PlatformSupervisor(:discord)   → StreamWorker(:discord)
 │   └── PlatformSupervisor(:mastodon)  → StreamWorker(:mastodon)
@@ -306,7 +307,14 @@ config :smm_monitor, :platforms,
 That's it. `use`-ing the behaviour gives you a fixture-backed
 `mock_fetch/2`, so the platform shows up in demo mode (`SMM_DEMO=1`)
 *before* the API work is done. Until `ready?/1` returns true it reports
-itself not connected and collects nothing. The supervisors build their children from config, so no
+itself not connected and collects nothing.
+
+The worker calls `fetch/2` once per client per poll, with the same
+platform state each time. A source that is the same for every client can
+be fetched once and matched many times: `lib/smm_monitor/fetchers/news.ex`
+refreshes each feed only for the first client of a poll (it compares
+`context.poll_count`), keeps the items in its state, and matches the
+other clients against them with `SmmMonitor.Matching`. The supervisors build their children from config, so no
 supervisor needs editing. Add credentials to `config/runtime.exs` and
 `.env.example` if the platform needs them.
 
@@ -448,6 +456,18 @@ terminal.
   a `clock` setting fixes the time, so the 24-hour and 7-day renewal rules
   are tested without waiting. Instagram and Threads read Meta's error
   codes through one module, `SmmMonitor.Fetchers.MetaGraph`.
+
+* News uses recorded-shape feeds in `test/fixtures/news/` (RSS 2.0,
+  Atom, RSS 1.0 and a Google News search result) and
+  `test/support/news_stub.ex` for every request. Responses are scripted
+  by URL fragment, the longest matching fragment winning; a list is
+  played in order, so a test can make a feed fail and then recover. The
+  stub finds its script through `$callers`, so it also answers the
+  `Task.async_stream` workers that fetch feeds side by side, and it
+  records each request's URL and headers for the politeness tests
+  (conditional GET, user agent, no compression). Hostile XML (entity
+  expansion, external entities, oversize and malformed feeds) is in
+  `test/smm_monitor/fetchers/news/feed_test.exs`.
 
 Tests run with `start_fetchers: false` and `start_tui: false`, so they get
 the processing layer and nothing else: no 30s polls racing assertions.
@@ -626,7 +646,8 @@ Compile-time defaults live in `config/config.exs`:
 | `SmmMonitor.Fetchers.Discord` | see below | Server and channel allow-lists, cursor file |
 | `SmmMonitor.Fetchers.Threads` | see below | Sources, search budget, token file |
 | `SmmMonitor.Fetchers.Mastodon` | see below | Server, timeline, streaming host, cursor file |
-| `:platforms` | eight entries | Platform → module, `kind` (`:poll` or `:stream`), enabled flag, `tab: :when_on`, opts |
+| `SmmMonitor.Fetchers.News` | see below | Feed list, Google News search, size and count limits |
+| `:platforms` | nine entries | Platform → module, `kind` (`:poll` or `:stream`), enabled flag, `tab: :when_on`, opts |
 
 Reddit has its own block, since these are deployment choices rather than
 app-wide ones:
@@ -692,6 +713,22 @@ config :smm_monitor, SmmMonitor.Fetchers.Mastodon,
   streaming_url: nil       # SMM_MASTODON_STREAMING_URL; nil = ask the server
   # cursor_file: "/path",  # unset = mastodon.cursor next to the database;
                            # nil = don't save, no catch-up after a restart
+```
+
+And News (no credential; the feed list and search switch come from the
+environment):
+
+```elixir
+config :smm_monitor, SmmMonitor.Fetchers.News,
+  feeds: [],                 # SMM_NEWS_FEEDS and SMM_NEWS_FEEDS_FILE, https only
+  search: :off,              # SMM_NEWS_SEARCH: :off | :google
+  edition: "en-US",          # SMM_NEWS_EDITION, Google News language and country
+  max_terms: 5,              # brand terms searched per client per poll
+  max_feeds: 100,
+  max_items: 100,            # read from each feed
+  lookback_ms: :timer.hours(24),
+  concurrency: 4,            # feeds fetched at once
+  max_body_bytes: 5 * 1024 * 1024
 ```
 
 A platform may also set its own `:interval_ms` in the `:platforms` config;

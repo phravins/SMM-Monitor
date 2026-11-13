@@ -2,9 +2,9 @@
 
 [← Back to the README](../README.md)
 
-SMM Monitor collects from eight platforms. Seven are switched on by
-giving them credentials; Bluesky needs no account and is switched on
-with one setting. **A platform that is switched on collects live data;
+SMM Monitor collects from nine platforms. Seven are switched on by
+giving them credentials; Bluesky and News need no account and are
+switched on with one setting. **A platform that is switched on collects live data;
 one that is not collects nothing** and shows as not connected. Nothing
 is invented unless you ask for demo data with `SMM_DEMO=1`.
 
@@ -18,6 +18,7 @@ is invented unless you ask for demo data with `SMM_DEMO=1`.
 | **Discord** | Free | Environment (`DISCORD_BOT_TOKEN`) | Messages that name your brand, in the servers you invite the bot to — [see below](#discord) |
 | **Threads** | Free, with a Meta app | Environment (`THREADS_ACCESS_TOKEN`) | Recent public posts naming your brand, and mentions of your account — **after Meta's App Review**; before it, only your own posts — [see below](#threads) |
 | **Mastodon** | Free, with an account | Environment (`MASTODON_INSTANCE`, `MASTODON_ACCESS_TOKEN`) | Every new public post your Mastodon server knows about that names your brand, within a second or two — [see below](#mastodon) |
+| **News** | Free, no account | Environment (`SMM_NEWS_FEEDS`, optionally `SMM_NEWS_SEARCH=google`) | New articles naming your brand in the RSS and Atom feeds you list, and optionally in Google News — [see below](#news) |
 
 **Start with Reddit.** It is free, it takes about three minutes, and it
 behaves most like what people expect the whole app to do.
@@ -979,9 +980,146 @@ After a reconnect, `GET https://{instance}/api/v1/timelines/public?min_id={id}&l
 with the token, for up to 10 pages. Nothing about your clients or brand terms is sent
 to the server: matching happens on your machine.
 
+## News
+
+News sites, trade press and blogs nearly all publish an **RSS or Atom
+feed**: a list of their latest articles that any reader can fetch. SMM
+Monitor reads the feeds you give it every 10 minutes and keeps the
+articles that name a brand. Like Reddit it is **polled**, not pushed, so
+an article shows up within about 10 minutes of the feed carrying it.
+
+No account and no key. Two sources, and you can use either or both:
+
+- **Your feeds** (always on once you list some): the publications that
+  matter to you, matched against every client's brand terms on your
+  machine.
+- **Google News search** (off unless you switch it on): one search per
+  brand term, which finds articles from publications you have not
+  listed. Read [the caveat below](#google-news-search) first.
+
+### Adding feeds
+
+```sh
+SMM_NEWS_FEEDS=https://opsledger.example/feed/,https://saasbriefing.example/atom.xml
+```
+
+A comma-separated list. For more than a handful, put them in a file, one
+per line, and point to it:
+
+```sh
+SMM_NEWS_FEEDS_FILE=/etc/smm_monitor/feeds.txt
+```
+
+```text
+# Trade press
+https://opsledger.example/feed/
+https://saasbriefing.example/atom.xml   # weekly, but worth it
+
+# Local
+https://journal.example/rss
+```
+
+`#` starts a comment, at the start of a line or after a space. Both
+settings can be used together; repeats are read once. Each address must
+be `https://`. A plain `http://` feed, or one with a user name or
+password in it, stops the app at start-up, naming the setting (and the
+file's line number) so it is quick to fix. Up to 100 feeds are read.
+
+To find a site's feed, look for an RSS icon or a "Subscribe" link, or
+try adding `/feed`, `/rss` or `/atom.xml` to its address. Most WordPress
+sites have one at `/feed/`. RSS 2.0, RSS 1.0 and Atom all work.
+
+Restart, and a **News** tab appears (or press `n`).
+
+### Google News search
+
+```sh
+SMM_NEWS_SEARCH=google
+# Which Google News edition to search: language and country.
+SMM_NEWS_EDITION=en-GB
+```
+
+Each poll, for each client, the app asks Google News for articles from
+the last day containing each brand term as an exact phrase: at most 5
+terms a client. The headline is shown without the " - Publisher" Google
+adds, and the publisher is shown as the author. The link goes to Google
+News, which forwards to the article.
+
+> **Check Google's terms before you switch this on for a business.**
+> Google publishes these search feeds for personal, non-commercial use,
+> and has no official API for Google News. Using them to monitor brands
+> for clients may not fit those terms; that is for you to decide, which
+> is why it is off by default. Your own feed list has no such catch:
+> publishers offer their feeds for anyone to read.
+
+If Google starts refusing requests (`429`), searching pauses for as long
+as Google asks (30 minutes if it does not say), with one line in the
+log. Your feeds carry on as normal.
+
+`SMM_NEWS_EDITION` (default `en-US`) is a language and a country, such
+as `fr-CA` or `pt-BR`. It changes which edition is searched, not the
+language of your brand terms.
+
+### What counts as new
+
+Articles published in the **last 24 hours** that name a brand term,
+matched as whole words in the headline and summary, the same way every
+other platform matches. The first time a feed is read, you see what it
+carried from the last day; after that, only what is new. Each client is
+shown each article once.
+
+An article with no date at all is taken as old on the first read (it
+could be from any year), and as new when it first appears after that,
+dated when it was first seen. A date in the future is read as now.
+
+### Polite to publishers
+
+Feeds are fetched **once per poll**, however many clients you have, and
+at most 4 at a time. Each request sends back the `ETag` and
+`Last-Modified` the feed gave last time, so an unchanged feed answers
+`304 Not Modified` with no body. The requests name the software
+(`smm_monitor/<version> (feed reader)`) and nothing about you or your
+clients.
+
+A feed that fails is tried again after 1, 2, 4, 8, then every 16 polls,
+with one warning when it starts failing and one line when it is back.
+A `429` or `503` is honoured for as long as its `Retry-After` asks (30
+minutes if it does not say, a day at most). If a feed has **moved
+permanently** (a `301` or `308`), it is followed, and the log says once
+which address to put in `SMM_NEWS_FEEDS` instead.
+
+If every feed is failing, the footer shows `news:error`, and the log
+says why for each.
+
+### Limits
+
+- **What the publisher writes into the feed.** Usually the headline and
+  a summary or the first paragraph, sometimes the whole article. A brand
+  named only deep in an article whose feed carries a short summary is
+  not found.
+- **10 minutes.** Feeds are polled; `SMM_NEWS_POLL_INTERVAL_MS` changes
+  how often, but many sites only update their feed every few minutes
+  anyway, and polling a feed every minute is rude.
+- **100 articles per feed and 5 MB per fetch.** A larger response is
+  dropped and the feed counts as failing.
+- **No paywalled or private feeds** that need a log-in. A feed with a
+  key in its address works; the key is never written to the log, which
+  names feeds by host and path only.
+- **No older articles.** Only what the feed carries now, from the last
+  day.
+
+### What News gets asked
+
+`GET` on each feed address you listed, with `Accept`, `User-Agent` and
+the conditional headers above, no cookies, and no compression asked
+for. Redirects are followed by hand, at most 3, and only to `https`.
+With search on, `GET
+https://news.google.com/rss/search?q="{term}"+when:1d&hl=…&gl=…&ceid=…`
+for each brand term: your brand terms are the one thing sent to Google.
+
 ## What each platform actually gives you
 
-All eight platforms run on live APIs. What differs is **how much of the platform each
+All nine platforms run on live APIs. What differs is **how much of the platform each
 one can see**, which matters more than whether the code is written:
 
 | Platform | Coverage | How it works |
@@ -994,6 +1132,7 @@ one can see**, which matters more than whether the code is written:
 | **Discord** | **Only servers the bot is invited to.** Every new message there, as it is sent (and what was missed during downtime, in channels seen before). No search of other servers. | Gateway WebSocket as a bot, matched locally against brand terms. Needs Message Content Intent. |
 | **Threads** | **Platform-wide search of recent posts, once Meta approves the app.** Before App Review, only your own account's posts. Plus mentions of your account. No private profiles. | Threads API `/keyword_search` and `/mentions`, polled every 5 minutes with a long-lived user token the app renews itself. 2,200 searches a day, shared with other apps. |
 | **Mastodon** | **What one server knows about.** Every new public post on its federated (or local) timeline, as it arrives, and up to an hour back after downtime. No search of older posts, and no view of servers yours does not hear from. | Streaming API WebSocket with a `read:statuses` user token, matched locally against brand terms. |
+| **News** | **The feeds you list**, plus (opt-in) Google News search. New articles from the last day whose headline or summary names the brand. Only what each publisher puts in its feed. | RSS 2.0, RSS 1.0 and Atom over HTTPS, polled every 10 minutes with conditional requests, matched locally. Google News search feeds when switched on. |
 
 Every platform independently collects nothing when its credentials are
 missing, and says so in the log. So a half-configured install shows real
@@ -1006,7 +1145,8 @@ you actually want.
 (after App Review) Threads answer "who mentioned us anywhere?"; Instagram answers "who tagged us, and what did
 people say on our own posts?"; Discord answers "what are people saying in
 the communities we are part of?"; Mastodon answers "what is reaching our
-corner of the fediverse?". A quiet Instagram, Discord or Mastodon tab
+corner of the fediverse?"; News answers "what are the publications we
+follow writing about us?". A quiet Instagram, Discord, Mastodon or News tab
 does not mean nobody is talking about the brand there.
 
 

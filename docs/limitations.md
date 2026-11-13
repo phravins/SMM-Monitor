@@ -131,6 +131,18 @@
   unlisted, followers-only and direct posts are never seen. A post whose
   id or account name does not look like Mastodon's is dropped.
 * Mastodon matching is whole words only, the same as Bluesky.
+* **News sees only what a feed carries**, usually the headline and a
+  summary. A brand named only deep in an article is missed when the
+  feed carries just a summary, and paywalled or log-in feeds cannot be
+  read at all.
+* News is **polled every 10 minutes**, and only articles from the
+  **last 24 hours** are kept; there is no back-fill of older articles.
+* News reads **at most 100 feeds, 100 articles per feed and 5 MB per
+  fetch**. A bigger feed counts as failing.
+* **Google News search is off by default** because Google publishes its
+  search feeds for personal, non-commercial use. It is at most 5 brand
+  terms a client, and it pauses whenever Google refuses requests.
+* News matching is whole words only, the same as Bluesky and Mastodon.
 * SSH access has no rate limiting or audit trail beyond one log line per
   connection — run it behind a VPN or firewall rather than exposed.
 * Remote sessions are read-only; there's no per-user permission model,

@@ -311,7 +311,7 @@ defmodule SmmMonitor.Fetchers.Mastodon do
 
   # The content warning first: a brand named in it is still a mention.
   defp text(status) do
-    body = html_to_text(status["content"])
+    body = SmmMonitor.Text.html_to_text(status["content"])
 
     case status["spoiler_text"] do
       warning when is_binary(warning) ->
@@ -324,52 +324,6 @@ defmodule SmmMonitor.Fetchers.Mastodon do
         body
     end
   end
-
-  @doc """
-  Mastodon's post HTML as plain text: line and paragraph breaks become
-  spaces, every other tag goes, and entities are decoded.
-
-      iex> SmmMonitor.Fetchers.Mastodon.html_to_text("<p>Hi &amp; bye</p><p>Next<br>line</p>")
-      "Hi & bye Next line"
-  """
-  @spec html_to_text(term()) :: String.t()
-  def html_to_text(html) when is_binary(html) do
-    html
-    |> String.replace(~r{<br\s*/?>|</p>}i, " ")
-    |> String.replace(~r/<[^>]*>/, "")
-    |> decode_entities()
-    |> String.split()
-    |> Enum.join(" ")
-  end
-
-  def html_to_text(_other), do: ""
-
-  @entities %{
-    "amp" => "&",
-    "lt" => "<",
-    "gt" => ">",
-    "quot" => "\"",
-    "apos" => "'",
-    "nbsp" => " "
-  }
-
-  defp decode_entities(text) do
-    Regex.replace(~r/&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z]{2,8});/, text, fn all, name ->
-      case name do
-        "#x" <> hex -> codepoint(Integer.parse(hex, 16), all)
-        "#X" <> hex -> codepoint(Integer.parse(hex, 16), all)
-        "#" <> decimal -> codepoint(Integer.parse(decimal), all)
-        name -> Map.get(@entities, name, all)
-      end
-    end)
-  end
-
-  # Only real characters: not NUL, not a surrogate, not past Unicode.
-  defp codepoint({code, ""}, _all)
-       when code in 1..0xD7FF or code in 0xE000..0x10FFFF,
-       do: <<code::utf8>>
-
-  defp codepoint(_parsed, _all), do: ""
 
   defp timestamp(iso) when is_binary(iso) do
     now = DateTime.utc_now()

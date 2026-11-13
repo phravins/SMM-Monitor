@@ -144,6 +144,35 @@ And what SMM Monitor reads that it should **not** trust:
 * The connected account is read-only here: SMM Monitor never posts,
   replies or deletes, and does not ask for the permissions to.
 
+### News feeds
+
+News needs no credential, but every feed is a document from a server
+you do not control, so it is read as hostile input.
+
+* Feed addresses must be `https://` with no user name or password in
+  them; anything else stops the app at start-up. Redirects are followed
+  by hand, at most 3, and only to `https`. A redirect to `http`, to an
+  address with a password in it, or past the third hop counts as a
+  failed fetch.
+* A response is read in pieces and dropped as soon as it passes 5 MB.
+  Compression is not asked for, so a small download cannot unpack into
+  a huge one.
+* The XML is parsed with Saxy, which never expands entities declared in
+  a `DOCTYPE` and never fetches external ones, so a feed cannot run a
+  "billion laughs" attack or read a file off the machine. At most 100
+  items are read from a feed, and headlines, summaries and names are
+  capped in length.
+* An article's link is kept only when it is `http` or `https` with no
+  user name or password; `javascript:`, `data:` and the like are
+  dropped. Text goes through the same clean-up as every post.
+* Requests send no cookies, and the `User-Agent` names only the software
+  (`smm_monitor/<version> (feed reader)`), never you or your clients.
+* Feeds are named in the log by host and path only, so a feed address
+  that carries a key in its query string never reaches the log. A
+  network error is logged by its reason alone.
+* With Google News search switched on, the only thing sent to Google is
+  each brand term, as the search query.
+
 ### Remote access (SSH)
 
 Off by default. When it is on:

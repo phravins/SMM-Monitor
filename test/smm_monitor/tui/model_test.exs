@@ -525,6 +525,47 @@ defmodule SmmMonitor.TUI.ModelTest do
     end
   end
 
+  describe "News's tab" do
+    setup do
+      saved =
+        for key <- [SmmMonitor.Fetchers.News, :mock_platforms],
+            do: {key, Application.get_env(:smm_monitor, key)}
+
+      # No feeds and no search: not connected, so no tab until demo data is asked for.
+      Application.put_env(:smm_monitor, SmmMonitor.Fetchers.News, feeds: [], search: :off)
+      Application.put_env(:smm_monitor, :mock_platforms, news: false)
+      owner = Ecto.Adapters.SQL.Sandbox.start_owner!(SmmMonitor.Repo, shared: true)
+
+      on_exit(fn ->
+        Ecto.Adapters.SQL.Sandbox.stop_owner(owner)
+        Enum.each(saved, fn {key, value} -> restore_env(key, value) end)
+      end)
+
+      start_supervised!(
+        {SmmMonitor.Fetchers.Worker, module: SmmMonitor.Fetchers.News, interval_ms: 3_600_000}
+      )
+
+      SmmMonitor.Fetchers.Worker.poll_now(:news)
+      :ok
+    end
+
+    test "is hidden, and n does nothing, without feeds or search" do
+      model = Model.refresh(Model.new())
+
+      refute :news in model.tabs
+      assert Model.handle_key(model, {:char, ?n}).tab == :all
+    end
+
+    test "is selected with n once it is showing data" do
+      Application.put_env(:smm_monitor, :mock_platforms, news: true)
+      SmmMonitor.Fetchers.Worker.poll_now(:news)
+
+      model = Model.refresh(Model.new())
+      assert :news in model.tabs
+      assert Model.handle_key(model, {:char, ?n}).tab == :news
+    end
+  end
+
   defp restore_env(key, nil), do: Application.delete_env(:smm_monitor, key)
   defp restore_env(key, value), do: Application.put_env(:smm_monitor, key, value)
 end

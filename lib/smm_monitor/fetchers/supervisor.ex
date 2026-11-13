@@ -8,6 +8,7 @@ defmodule SmmMonitor.Fetchers.Supervisor do
       ├── PlatformSupervisor(:twitter)   → Worker(:twitter)
       ├── PlatformSupervisor(:instagram) → Worker(:instagram)
       ├── PlatformSupervisor(:threads)   → Worker(:threads)
+      ├── PlatformSupervisor(:news)      → Worker(:news)
       ├── PlatformSupervisor(:bluesky)   → StreamWorker(:bluesky)
       ├── PlatformSupervisor(:discord)   → StreamWorker(:discord)
       └── PlatformSupervisor(:mastodon)  → StreamWorker(:mastodon)

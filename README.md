@@ -32,15 +32,15 @@ sentiment summary and a table of recent mentions](docs/images/dashboard.png)
 ## How it works
 
 ```text
-  Reddit  YouTube  X (Twitter)  Instagram  Threads   Bluesky  Discord  Mastodon
-     │       │          │           │         │         │        │        │
-     └───────┴──────┬───┴───────────┴─────────┘         └────────┼────────┘
-                    ▼                                            ▼
-       one poller per platform                    one live stream each, matched
-       (asks every 30 s to 18 min,                against brand terms as
-        within rate limits and quotas)            posts are written
-                    │                                            │
-                    └─────────────────┬──────────────────────────┘
+  Reddit YouTube X (Twitter) Instagram Threads News   Bluesky Discord Mastodon
+     │      │        │          │        │      │       │       │       │
+     └──────┴────┬───┴──────────┴────────┴──────┘       └───────┼───────┘
+                 ▼                                              ▼
+    one poller per platform                       one live stream each, matched
+    (asks every 30 s to 18 min,                   against brand terms as
+     within rate limits and quotas)               posts are written
+                 │                                              │
+                 └────────────────────┬─────────────────────────┘
                                       ▼
                    clean · score sentiment · de-duplicate
                                       │
@@ -58,8 +58,8 @@ sentiment summary and a table of recent mentions](docs/images/dashboard.png)
   subreddits worth watching, and its own alert settings. The dashboard
   shows one client at a time.
 - **Polling.** Each platform is asked for new posts on a timer. Reddit
-  every 30 seconds, X and Threads every 5 minutes, Instagram every 15
-  and YouTube every 18. The intervals are set by what each API allows for free, or
+  every 30 seconds, X and Threads every 5 minutes, news feeds every 10,
+  Instagram every 15 and YouTube every 18. The intervals are set by what each API allows for free, or
   for what you pay.
 - **Streaming.** Bluesky, Discord and Mastodon are not polled. One
   connection each stays open and receives new posts as they are
@@ -241,7 +241,8 @@ it shows as not connected and collects nothing. Bluesky needs no
 credentials, only switching on. Discord works through a bot you invite
 to your own (or a client's) servers. Threads needs a Meta app, and Meta's
 App Review before it can search beyond your own account. Mastodon needs
-an account on a Mastodon server and a read-only token from it.
+an account on a Mastodon server and a read-only token from it. News
+needs only the addresses of the feeds you want read.
 
 | Platform | Cost | How to connect | What it can find |
 | --- | --- | --- | --- |
@@ -253,6 +254,7 @@ an account on a Mastodon server and a read-only token from it.
 | **Discord** | Free | `DISCORD_BOT_TOKEN`, then invite the bot | Messages that name the brand, in the servers the bot is invited to, about a second after they are sent. Discord has no public search |
 | **Threads** | Free, with a Meta app | `THREADS_ACCESS_TOKEN` | Recent public posts that name the brand, and mentions of your account. **Until Meta approves the app in App Review, only your own account's posts.** The token renews itself |
 | **Mastodon** | Free, with an account | `MASTODON_INSTANCE` and `MASTODON_ACCESS_TOKEN` | Every new public post your server knows about that names the brand, about a second after it arrives. A big server sees much more of the fediverse than a small one |
+| **News** | Free, no account | `SMM_NEWS_FEEDS` (a list of RSS or Atom feeds), and optionally `SMM_NEWS_SEARCH=google` | New articles from the last day whose headline or summary names the brand, in the feeds you list. Google News search is off by default: Google's terms allow its feeds for personal, non-commercial use |
 
 **Start with Reddit:** it is free and takes about three minutes.
 
@@ -285,6 +287,7 @@ win over keys typed into the wizard. You no longer need any
 | `d` | Discord only (its tab appears once it has a token). On the config screen `d` still removes a client |
 | `e` | Threads only (its tab appears once it has a token). On the config screen `e` still edits a client |
 | `m` | Mastodon only (its tab appears once it has a token) |
+| `n` | News only (its tab appears once it has feeds, or search is on) |
 | `←` / `→` | Previous / next tab |
 | `j` / `k`, `↓` / `↑` | Scroll the mentions table |
 | `PgDn` / `PgUp` | Scroll a page at a time |
@@ -362,6 +365,7 @@ quota, or no network. A platform whose last poll failed shows `error`.
 | Reddit | 30 seconds | 60 requests a minute allowed | `SMM_POLL_INTERVAL_MS` |
 | X | 5 minutes | Monthly post cap | `SMM_TWITTER_POLL_INTERVAL_MS` |
 | Threads | 5 minutes | 2,200 searches a day, one per brand term per poll | `SMM_THREADS_POLL_INTERVAL_MS` |
+| News | 10 minutes | Feeds are fetched once a poll for every client, with conditional requests; most sites update theirs every few minutes at most | `SMM_NEWS_POLL_INTERVAL_MS` |
 | Instagram | 15 minutes | Meta's hourly allowance | `SMM_INSTAGRAM_POLL_INTERVAL_MS` |
 | YouTube | 18 minutes | 10,000 free quota units a day, 100 per search | `SMM_YOUTUBE_POLL_INTERVAL_MS` |
 | Bluesky | Live (about 1 s) | Posts are pushed as they are written; stale after 90 s of silence | — |

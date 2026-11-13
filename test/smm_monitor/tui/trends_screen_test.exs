@@ -55,8 +55,8 @@ defmodule SmmMonitor.TUI.TrendsScreenTest do
     end
 
     test "the tab bar keeps its counts when the terminal is wide enough" do
-      # Eleven tabs with their counts (Bluesky, Discord, Threads and
-      # Mastodon show in tests, where every platform runs on demo data).
+      # Twelve tabs with their counts (Bluesky, Discord, Threads, Mastodon
+      # and News show in tests, where every platform runs on demo data).
       model = Model.new(%{window: %{height: 40, width: 200}})
 
       assert {:trends, "trends (14d)"} in Model.tab_labels(model)
@@ -79,12 +79,13 @@ defmodule SmmMonitor.TUI.TrendsScreenTest do
       assert width + 2 <= 80
     end
 
-    test "with eleven tabs, the space around them narrows before anything is cut off" do
+    test "with twelve tabs, the space around them narrows before anything is cut off" do
       model = Model.new(%{window: %{height: 40, width: 80}})
 
-      assert length(model.tabs) == 11
+      assert length(model.tabs) == 12
       assert Model.tab_padding(model) == 2
       assert {:mastodon, "mast"} in Model.tab_labels(model)
+      assert {:news, "news"} in Model.tab_labels(model)
     end
 
     test "and stays roomy when the short names fit" do

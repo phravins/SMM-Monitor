@@ -27,14 +27,17 @@ defmodule SmmMonitor.Fetchers.Fetcher do
       has resolved.
     * Threads carries its access token (renewed in the background), how
       far each client has read, and a rolling count of keyword searches.
+    * News carries each feed's last response, so a feed is fetched once
+      per poll however many clients there are, and asked only for what
+      changed.
 
   The state lives in the worker's GenServer state, which means a
   crashing platform starts again clean and cannot corrupt anyone else's.
 
   ## Adding a platform
 
-      defmodule SmmMonitor.Fetchers.Mastodon do
-        use SmmMonitor.Fetchers.Fetcher, platform: :mastodon
+      defmodule SmmMonitor.Fetchers.Tumblr do
+        use SmmMonitor.Fetchers.Fetcher, platform: :tumblr
 
         @impl true
         def ready?(context), do: context.credentials[:access_token] != nil
