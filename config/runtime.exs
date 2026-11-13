@@ -260,7 +260,7 @@ config :smm_monitor,
   # config/test.exs, so this is the only place that can decide it.
   mock_mode: RC.bool("SMM_DEMO", RC.bool("SMM_MOCK_MODE", config_env() == :test)),
   keywords: RC.list("SMM_KEYWORDS", ["realoffice", "real office"]),
-  poll_interval_ms: RC.integer("SMM_POLL_INTERVAL_MS", 30_000),
+  poll_interval_ms: RC.integer("SMM_POLL_INTERVAL_MS", 15_000),
   max_mentions: RC.integer("SMM_MAX_MENTIONS", 2_000),
   # `SMM_TUI=1 mix run --no-halt` starts the dashboard from the app
   # itself. The downloaded binary defaults to showing it: that is the
@@ -423,6 +423,20 @@ if subreddits = System.get_env("SMM_REDDIT_SUBREDDITS") do
   config :smm_monitor, SmmMonitor.Fetchers.Reddit,
     subreddits:
       subreddits |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
+end
+
+# Whether the Reddit fetcher reads comments in a client's subreddits as
+# well as posts, and how often it searches all of Reddit for a client
+# with no subreddits.
+# `if comments = ...` would skip an explicit false, the one value that
+# matters here.
+case RC.bool_or_nil("SMM_REDDIT_COMMENTS") do
+  nil -> :ok
+  comments -> config :smm_monitor, SmmMonitor.Fetchers.Reddit, comments: comments
+end
+
+if interval_ms = RC.integer_or_nil("SMM_REDDIT_SEARCH_INTERVAL_MS") do
+  config :smm_monitor, SmmMonitor.Fetchers.Reddit, search_interval_ms: interval_ms
 end
 
 # Bluesky streams every new post on the network through Jetstream and

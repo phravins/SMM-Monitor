@@ -100,7 +100,9 @@ on when there is at least one feed, or search is switched on:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `SMM_POLL_INTERVAL_MS` | `30000` (30 s) | Poll interval for platforms without their own (Reddit) |
+| `SMM_POLL_INTERVAL_MS` | `15000` (15 s) | Poll interval for platforms without their own: Reddit, whose subreddit listings it sets |
+| `SMM_REDDIT_SEARCH_INTERVAL_MS` | `30000` (30 s) | How often all of Reddit is searched for a client with no subreddits |
+| `SMM_REDDIT_COMMENTS` | `true` | Read new comments in a client's subreddits as well as new posts. `false` halves Reddit's requests |
 | `SMM_YOUTUBE_POLL_INTERVAL_MS` | `1080000` (18 min) | YouTube's interval. 18 minutes lasts a day of quota for one client |
 | `SMM_YOUTUBE_DAILY_QUOTA_BUDGET` | `8000` | Quota units to spend per day before pausing until midnight Pacific |
 | `SMM_TWITTER_POLL_INTERVAL_MS` | `300000` (5 min) | X's interval |

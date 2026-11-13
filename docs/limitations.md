@@ -29,11 +29,21 @@
   credentials, and it isn't built.
 * Removing a client deletes its mentions. There is no undo and no export
   first.
-* Reddit search returns *posts*, not comments. A brand discussed only in
-  the comments of someone else's thread won't show up.
-* Reddit's search index lags a little behind new posts, so a mention can
-  take a few minutes to appear. `time_filter` bounds how far back a poll
-  looks; mentions older than that are never seen at all.
+* **Reddit sees comments only in a client's own subreddits.** Searching
+  all of Reddit, for a client with no subreddits, returns posts, not
+  comments, and Reddit's search index can take a few minutes to include
+  a new post. `time_filter` bounds how far back a search looks.
+* Reddit's subreddit listings show the **newest 100 posts and 100
+  comments**, and a poll reads at most three pages of each. A very busy
+  set of subreddits, or a long pause (a spent quota, the app being
+  stopped), can pass more than that between polls, and the rest is not
+  seen. Nothing older than a day is reported, and nothing is fetched
+  from before the app started.
+* Reddit **edits and deletions are not followed**; a post or comment is
+  stored as it was first read.
+* A **private, banned or misspelt subreddit** is skipped for an hour at a
+  time, with a log line naming it. A client whose subreddits are all
+  refused shows an error.
 * YouTube search finds *videos*, not comments — so a brand discussed in
   the comments under someone else's video won't show up. The hybrid that
   would fix this is described in

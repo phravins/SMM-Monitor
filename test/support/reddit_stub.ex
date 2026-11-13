@@ -11,9 +11,11 @@ defmodule SmmMonitor.RedditStub do
       Reddit.fetch(context, state)
       assert [{:post, token_url}, {:get, search_url}] = RedditStub.requests()
 
-  Responses are given per request kind (`:token` or `:search`). A list is
-  consumed in order and the last entry repeats, which is what lets a test
-  script "401 first, then 200".
+  Responses are given per request kind: `:token`, `:search`, or the
+  subreddit listings `:new` and `:comments`. A list is consumed in order
+  and the last entry repeats, which is what lets a test script "401
+  first, then 200". A function is called with the request URL, for a
+  response that depends on which subreddits were asked for.
   """
 
   @key :reddit_stub
@@ -40,7 +42,16 @@ defmodule SmmMonitor.RedditStub do
   def token_requests, do: Enum.filter(requests(), fn {_method, url} -> token_url?(url) end)
 
   @doc "Requests made against the search endpoint."
-  def search_requests, do: Enum.reject(requests(), fn {_method, url} -> token_url?(url) end)
+  def search_requests, do: requests_of(:search)
+
+  @doc "Requests for subreddit listings, `/new` and `/comments`."
+  def listing_requests, do: requests_of(:new) ++ requests_of(:comments)
+
+  @doc "Requests of one kind, as `{method, url}`."
+  def requests_of(kind), do: Enum.filter(requests(), fn {_method, url} -> kind(url) == kind end)
+
+  @doc "The decoded query string of a request URL."
+  def query(url), do: url |> URI.parse() |> Map.get(:query) |> to_string() |> URI.decode_query()
 
   @doc "A successful token response."
   def token(expires_in \\ 3_600, token \\ "stub-token") do
@@ -78,7 +89,7 @@ defmodule SmmMonitor.RedditStub do
   @doc false
   def run(request) do
     url = URI.to_string(request.url)
-    kind = if token_url?(url), do: :token, else: :search
+    kind = kind(url)
 
     state = Process.get(@key) || %{script: %{}, requests: []}
     {response, script} = pop(state.script, kind)
@@ -88,6 +99,8 @@ defmodule SmmMonitor.RedditStub do
       | script: script,
         requests: [{request.method, url} | state.requests]
     })
+
+    response = if is_function(response, 1), do: response.(url), else: response
 
     {request, response}
   end
@@ -107,4 +120,15 @@ defmodule SmmMonitor.RedditStub do
   end
 
   defp token_url?(url), do: String.contains?(url, "access_token")
+
+  defp kind(url) do
+    path = URI.parse(url).path || ""
+
+    cond do
+      token_url?(url) -> :token
+      String.ends_with?(path, "/new") -> :new
+      String.ends_with?(path, "/comments") -> :comments
+      true -> :search
+    end
+  end
 end

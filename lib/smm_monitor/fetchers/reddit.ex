@@ -6,20 +6,36 @@ defmodule SmmMonitor.Fetchers.Reddit do
   user, no redirect, no approval wait. See the README for how to create one
   at <https://www.reddit.com/prefs/apps>.
 
-  Each poll is a single HTTP request. The configured subreddits are joined
-  into one multireddit search (`/r/a+b+c/search`) rather than one request
-  per subreddit, which keeps a poll to one request against the 60/minute
-  budget no matter how many subreddits are being watched. With no
-  subreddits configured it falls back to a site-wide `/search`.
+  Reddit is read two ways, depending on the client:
+
+    * **A client with subreddits** has them read directly: the newest
+      posts (`/r/a+b/new`) and comments (`/r/a+b/comments`), matched here
+      against its brand terms. A post shows up one poll after it is
+      written, 15 seconds by default, where search can take minutes to
+      index it, and comments are seen, which search never returns. Every
+      client's subreddits are read together once per poll, 50 to a
+      request, so adding clients does not add requests unless it adds
+      subreddits. See `SmmMonitor.Fetchers.Reddit.Listings`.
+    * **A client with no subreddits** has all of Reddit searched
+      (`/search`), every 30 seconds whatever the poll interval, since
+      there is no listing of everything to read instead. So does a
+      `:query` setting, which is Reddit search syntax.
+
+  Every request checks the quota Reddit last reported first
+  (`Reddit.RateLimit`), and a refused or spent quota stops the poll.
 
   State carried between polls (`SmmMonitor.Fetchers.Reddit.State`) is the
-  cached OAuth token and the rate-limit quota. Both live in the worker's
-  GenServer state.
+  cached OAuth token, the rate-limit quota and the listings already read.
+  It lives in the worker's GenServer state.
 
   ## Configuration
 
       config :smm_monitor, SmmMonitor.Fetchers.Reddit,
         subreddits: ["smallbusiness", "marketing"],
+        # Read comments in the subreddits as well as posts.
+        comments: true,
+        # Site-wide search, for clients with no subreddits.
+        search_interval_ms: 30_000,
         limit: 50,
         sort: "new",
         time_filter: "day"
@@ -35,15 +51,24 @@ defmodule SmmMonitor.Fetchers.Reddit do
   require Logger
 
   alias SmmMonitor.Fetchers.Fetcher
-  alias SmmMonitor.Fetchers.Reddit.{Auth, RateLimit, State}
+  alias SmmMonitor.Fetchers.Reddit.{Auth, Listings, RateLimit, State}
 
-  @search_host "https://oauth.reddit.com"
+  @api_host "https://oauth.reddit.com"
   @default_limit 50
   @default_sort "new"
   @default_time_filter "day"
 
   # Reddit caps a listing at 100 items per request.
   @max_limit 100
+  @page_size 100
+  # A gap is filled from at most this many pages of one listing.
+  @max_pages 3
+  # Subreddits per multireddit request, which keeps the URL short.
+  @subs_per_request 50
+  @default_search_interval_ms 30_000
+  # Items older than this are never handed to a client.
+  @lookback_ms :timer.hours(24)
+  @bad_sub_ms :timer.hours(1)
 
   @impl true
   def init_state(_context), do: State.new()
@@ -57,16 +82,13 @@ defmodule SmmMonitor.Fetchers.Reddit do
   def fetch(context, state) do
     state = state || State.new()
     settings = settings(context)
-    req_options = Keyword.get(settings, :req_options, [])
+    now = now_ms(settings)
+    client = client_id(context)
+    state = warn_invalid(state, Keyword.get(settings, :subreddits, []))
 
-    case RateLimit.check(state.rate_limit) do
-      {:backoff, wait_ms} ->
-        # Tell the worker to postpone rather than burning the request now.
-        Logger.info("reddit: near the rate limit, backing off for #{wait_ms}ms")
-        {:error, {:rate_limited, wait_ms}, state}
-
-      :ok ->
-        do_fetch(context, state, settings, req_options)
+    case listing_subs(settings) do
+      [] -> search_if_due(context, state, settings, client, now)
+      subs -> read_listings(context, state, settings, client, subs, now)
     end
   end
 
@@ -139,10 +161,12 @@ defmodule SmmMonitor.Fetchers.Reddit do
       "/r/marketing/search"
       iex> SmmMonitor.Fetchers.Reddit.search_path(["marketing", "smallbusiness"])
       "/r/marketing+smallbusiness/search"
+      iex> SmmMonitor.Fetchers.Reddit.search_path(["marketing", "../api/v1/me"])
+      "/r/marketing/search"
   """
   @spec search_path([String.t()]) :: String.t()
   def search_path(subreddits) do
-    case clean_subreddits(subreddits) do
+    case Listings.clean(subreddits) do
       [] -> "/search"
       subs -> "/r/#{Enum.join(subs, "+")}/search"
     end
@@ -168,70 +192,255 @@ defmodule SmmMonitor.Fetchers.Reddit do
 
   # --- internals ------------------------------------------------------------
 
-  defp do_fetch(context, state, settings, req_options) do
-    credentials = context.credentials
+  # --- site-wide search -------------------------------------------------------
 
-    with {:ok, token, auth} <- Auth.token(state.auth, credentials, req_options),
-         state = %{state | auth: auth},
-         {:ok, body, state} <- search(token, context, state, settings, req_options) do
-      {:ok, parse(body), state}
-    else
-      {:error, reason, %State{} = state} -> {:error, reason, state}
-      {:error, reason, %Auth{} = auth} -> {:error, reason, %{state | auth: auth}}
+  # Search runs on its own cadence, 30 seconds by default, however often
+  # the worker polls: the listings below are what the short interval is
+  # for. A second's slack keeps a 30-second search from slipping to 45
+  # when the worker's timer fires a little early.
+  defp search_if_due(context, state, settings, client, now) do
+    interval = Keyword.get(settings, :search_interval_ms, @default_search_interval_ms)
+
+    case Map.get(state.searched_at, client) do
+      last when is_integer(last) and now - last < interval - 1_000 ->
+        {:ok, [], state}
+
+      _due ->
+        case search(context, state, settings) do
+          {:ok, body, state} ->
+            {:ok, parse(body), %{state | searched_at: Map.put(state.searched_at, client, now)}}
+
+          error ->
+            error
+        end
     end
   end
 
-  defp search(token, context, state, settings, req_options) do
-    subreddits = Keyword.get(settings, :subreddits, [])
+  defp search(context, state, settings) do
+    subreddits = Listings.clean(Keyword.get(settings, :subreddits, []))
 
-    request =
-      Req.new(
-        [
-          url: @search_host <> search_path(subreddits),
-          params: search_params(context, settings, subreddits),
-          headers: [
-            {"authorization", "Bearer #{token}"},
-            {"user-agent", Auth.user_agent(context.credentials)}
-          ],
-          receive_timeout: 10_000,
-          # Retrying is the worker's job, not Req's. A blind retry of a 429
-          # spends quota we've just been told we don't have, and blocks the
-          # worker for seconds while it sleeps between attempts.
-          retry: false
-        ] ++ req_options
-      )
-
-    state = %{state | rate_limit: RateLimit.record_request(state.rate_limit)}
-
-    request
-    |> Req.request()
-    |> handle_search_response(state)
-  end
-
-  defp search_params(context, settings, subreddits) do
-    [
+    get(context, state, settings, search_path(subreddits),
       q: build_query(context.keywords, settings),
       sort: Keyword.get(settings, :sort, @default_sort),
       t: Keyword.get(settings, :time_filter, @default_time_filter),
       limit: limit(settings),
       type: "link",
       # Without this, a subreddit-scoped search still returns site-wide hits.
-      restrict_sr: clean_subreddits(subreddits) != [],
+      restrict_sr: subreddits != [],
       raw_json: 1
-    ]
+    )
   end
 
-  defp handle_search_response({:ok, %{status: 200, body: body, headers: headers}}, state) do
+  # --- subreddit listings -----------------------------------------------------
+
+  # The subreddits to read listings for. A `:query` setting is Reddit
+  # search syntax, which a listing cannot apply, so it keeps search.
+  defp listing_subs(settings) do
+    case Keyword.get(settings, :query) do
+      query when is_binary(query) and query != "" -> []
+      _none -> Listings.clean(Keyword.get(settings, :subreddits, []))
+    end
+  end
+
+  defp read_listings(context, state, settings, client, subs, now) do
+    {state, live} = drop_bad(state, subs, now)
+
+    listings =
+      state.listings
+      |> Listings.begin_poll(Map.get(context, :poll_count, 0), now, @lookback_ms)
+      |> Listings.to_fetch(client, live)
+
+    {wanted, listings} = listings
+    wanted = Enum.reject(wanted, &Map.has_key?(state.bad_subs, &1))
+    state = %{state | listings: listings}
+
+    with {:ok, state} <-
+           read_chunks(Enum.chunk_every(wanted, @subs_per_request), context, state, settings, now) do
+      deliver(state, client, subs, context.keywords, now)
+    end
+  end
+
+  defp deliver(state, client, subs, keywords, now) do
+    {state, live} = drop_bad(state, subs, now)
+
+    cond do
+      live == [] ->
+        {reason, _until} = Map.fetch!(state.bad_subs, hd(subs))
+        {:error, reason, state}
+
+      reason = Listings.failure(state.listings, live) ->
+        {:error, reason, state}
+
+      true ->
+        {mentions, listings} = Listings.deliver(state.listings, client, live, keywords)
+        {:ok, mentions, %{state | listings: listings}}
+    end
+  end
+
+  # Subreddits Reddit refused within the hour are left out; the rest of
+  # the client's list is still read.
+  defp drop_bad(state, subs, now) do
+    bad_subs = Map.reject(state.bad_subs, fn {_sub, {_reason, until}} -> until <= now end)
+    {%{state | bad_subs: bad_subs}, Enum.reject(subs, &Map.has_key?(bad_subs, &1))}
+  end
+
+  defp read_chunks([], _context, state, _settings, _now), do: {:ok, state}
+
+  defp read_chunks([subs | rest], context, state, settings, now) do
+    case read_chunk(subs, context, state, settings, now) do
+      {:ok, state} ->
+        read_chunks(rest, context, state, settings, now)
+
+      # Out of quota, a refused token or no network: the rest would fail
+      # the same way, so every client this poll is told rather than each
+      # trying again.
+      {:error, reason, state} ->
+        listings = Listings.mark(state.listings, Enum.concat([subs | rest]), {:error, reason})
+        {:error, reason, %{state | listings: listings}}
+    end
+  end
+
+  # One multireddit, read for posts and then comments. An error that is
+  # about these subreddits (a 404 for a banned one, a 500) is recorded
+  # against them and the poll goes on; anything else stops it.
+  defp read_chunk(subs, context, state, settings, now) do
+    kinds = if Keyword.get(settings, :comments, true), do: [:new, :comments], else: [:new]
+
+    result =
+      Enum.reduce_while(kinds, {:ok, state}, fn kind, {:ok, state} ->
+        case read_pages(subs, kind, nil, 1, context, state, settings, now) do
+          {:ok, state} -> {:cont, {:ok, state}}
+          error -> {:halt, error}
+        end
+      end)
+
+    case result do
+      {:ok, state} ->
+        {:ok, %{state | listings: Listings.mark(state.listings, subs, :ok)}}
+
+      {:error, {:http_error, status}, state} when status in 300..399 or status in [403, 404] ->
+        refused(subs, status, context, state, settings, now)
+
+      {:error, {:http_error, _status} = reason, state} ->
+        {:ok, %{state | listings: Listings.mark(state.listings, subs, {:error, reason})}}
+
+      error ->
+        error
+    end
+  end
+
+  # Reddit answers a multireddit with one private, banned or misspelt
+  # subreddit by refusing the lot, so the subreddits are tried one by one
+  # to find which. Only the refused ones are then left out.
+  defp refused([sub], status, _context, state, _settings, now) do
+    Logger.warning(
+      "reddit: r/#{sub} could not be read (HTTP #{status}). It may be private, banned or " <>
+        "misspelt; it is skipped for an hour. Check the client's subreddits."
+    )
+
+    state = %{
+      state
+      | bad_subs: Map.put(state.bad_subs, sub, {{:http_error, status}, now + @bad_sub_ms}),
+        listings: Listings.mark(state.listings, [sub], :ok)
+    }
+
+    {:ok, state}
+  end
+
+  defp refused(subs, _status, context, state, settings, now) do
+    Enum.reduce_while(subs, {:ok, state}, fn sub, {:ok, state} ->
+      case read_chunk([sub], context, state, settings, now) do
+        {:ok, state} -> {:cont, {:ok, state}}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  # A listing is read a page of 100 at a time, newest first. Once it has
+  # been read before, a full page of nothing but new items means more
+  # arrived since the last poll than a page holds (the cycle was paused,
+  # or the subreddits are busy), so the next page is read too, up to
+  # three. The first read takes one page: there is no gap to fill yet.
+  defp read_pages(subs, kind, after_name, page, context, state, settings, now) do
+    params = [limit: @page_size, raw_json: 1] ++ if(after_name, do: [after: after_name], else: [])
+    primed? = Listings.primed?(state.listings, kind, subs)
+
+    case get(context, state, settings, listing_path(subs, kind), params, redirect: false) do
+      {:ok, body, state} ->
+        items = Listings.parse(body)
+        {listings, new} = Listings.add(state.listings, items, now, @lookback_ms)
+        state = %{state | listings: listings}
+        next = Listings.last_name(body)
+
+        gap? =
+          primed? and items != [] and new == length(items) and
+            Listings.page_size(body) >= @page_size and is_binary(next) and page < @max_pages
+
+        if gap? do
+          read_pages(subs, kind, next, page + 1, context, state, settings, now)
+        else
+          {:ok, %{state | listings: Listings.prime(state.listings, kind, subs)}}
+        end
+
+      error ->
+        error
+    end
+  end
+
+  defp listing_path(subs, :new), do: "/r/#{Enum.join(subs, "+")}/new"
+  defp listing_path(subs, :comments), do: "/r/#{Enum.join(subs, "+")}/comments"
+
+  # --- requests ---------------------------------------------------------------
+
+  # Every request goes through here: the quota is checked first, so a
+  # request is never spent when Reddit has said there is none left.
+  defp get(context, state, settings, path, params, extra \\ []) do
+    req_options = Keyword.get(settings, :req_options, [])
+
+    with :ok <- RateLimit.check(state.rate_limit),
+         {:ok, token, auth} <- Auth.token(state.auth, context.credentials, req_options) do
+      state = %{state | auth: auth, rate_limit: RateLimit.record_request(state.rate_limit)}
+
+      [
+        url: @api_host <> path,
+        params: params,
+        headers: [
+          {"authorization", "Bearer #{token}"},
+          {"user-agent", Auth.user_agent(context.credentials)}
+        ],
+        receive_timeout: 10_000,
+        # Retrying is the worker's job, not Req's. A blind retry of a 429
+        # spends quota we've just been told we don't have, and blocks the
+        # worker for seconds while it sleeps between attempts.
+        retry: false
+      ]
+      |> Keyword.merge(extra)
+      |> Kernel.++(req_options)
+      |> Req.new()
+      |> Req.request()
+      |> handle_response(state)
+    else
+      {:backoff, wait_ms} ->
+        # Tell the worker to postpone rather than burning the request now.
+        Logger.info("reddit: near the rate limit, backing off for #{wait_ms}ms")
+        {:error, {:rate_limited, wait_ms}, state}
+
+      {:error, reason, %Auth{} = auth} ->
+        {:error, reason, %{state | auth: auth}}
+    end
+  end
+
+  defp handle_response({:ok, %{status: 200, body: body, headers: headers}}, state) do
     {:ok, body, %{state | rate_limit: RateLimit.observe(state.rate_limit, headers)}}
   end
 
   # The token was rejected despite looking fresh — drop it so the next poll
   # fetches a new one rather than failing the same way forever.
-  defp handle_search_response({:ok, %{status: 401}}, state) do
+  defp handle_response({:ok, %{status: 401}}, state) do
     {:error, :unauthorized, %{state | auth: Auth.invalidate(state.auth)}}
   end
 
-  defp handle_search_response({:ok, %{status: 429, headers: headers}}, state) do
+  defp handle_response({:ok, %{status: 429, headers: headers}}, state) do
     rate_limit = RateLimit.observe(state.rate_limit, headers)
 
     wait_ms =
@@ -243,12 +452,37 @@ defmodule SmmMonitor.Fetchers.Reddit do
     {:error, {:rate_limited, wait_ms}, %{state | rate_limit: rate_limit}}
   end
 
-  defp handle_search_response({:ok, %{status: status}}, state) do
-    {:error, {:http_error, status}, state}
+  defp handle_response({:ok, %{status: status, headers: headers}}, state) do
+    {:error, {:http_error, status},
+     %{state | rate_limit: RateLimit.observe(state.rate_limit, headers)}}
   end
 
-  defp handle_search_response({:error, reason}, state) do
+  defp handle_response({:error, reason}, state) do
     {:error, {:transport, reason}, state}
+  end
+
+  # --- helpers ----------------------------------------------------------------
+
+  # A name that is not a subreddit never reaches a request path. Said once
+  # per name, since the client record will keep offering it every poll.
+  defp warn_invalid(state, subreddits) do
+    subreddits
+    |> Listings.invalid()
+    |> Enum.reject(&MapSet.member?(state.warned, &1))
+    |> Enum.reduce(state, fn name, state ->
+      Logger.warning("reddit: ignoring #{inspect(name)}, which is not a subreddit name")
+      %{state | warned: MapSet.put(state.warned, name)}
+    end)
+  end
+
+  defp client_id(%{client: %{id: id}}), do: id
+  defp client_id(_context), do: :none
+
+  defp now_ms(settings) do
+    case Keyword.get(settings, :clock) do
+      clock when is_function(clock, 0) -> clock.()
+      _none -> System.system_time(:millisecond)
+    end
   end
 
   defp post_data(%{"data" => %{} = post}), do: post
@@ -295,13 +529,6 @@ defmodule SmmMonitor.Fetchers.Reddit do
     |> Keyword.get(:limit, @default_limit)
     |> min(@max_limit)
     |> max(1)
-  end
-
-  defp clean_subreddits(subreddits) do
-    subreddits
-    |> List.wrap()
-    |> Enum.map(&(&1 |> to_string() |> String.trim() |> String.trim_leading("r/")))
-    |> Enum.reject(&(&1 == ""))
   end
 
   defp quote_if_phrase(keyword) do

@@ -68,7 +68,8 @@ is logged and retried; an unexpected exception is left to crash the worker
 so its supervisor can restart it clean.
 
 Each worker also carries its platform's own state between polls — for
-Reddit, the cached OAuth token and the rate-limit quota. That state lives
+Reddit, the cached OAuth token, the rate-limit quota and the subreddit
+listings already read (`Reddit.State`). That state lives
 in the worker's GenServer state, so a crashing platform restarts with a
 clean token and can't corrupt anyone else's. A fetcher that fails with
 `{:rate_limited, ms}` pushes its next poll out by at least that long:
@@ -416,9 +417,14 @@ terminal.
   The parse tests assert on specific post ids, so they'll need updating to
   match whatever you capture.
 
+* Listings parse against `test/fixtures/reddit_new.json` and
+  `test/fixtures/reddit_comments.json`, in the `Listing` / `t3` and `t1`
+  shapes `/new` and `/comments` return.
+
 * The auth, rate-limit and full-fetch tests use a stub Req adapter
   (`test/support/reddit_stub.ex`), which scripts responses per request kind
-  so a test can say "401 first, then 200".
+  (`:token`, `:search`, `:new`, `:comments`) so a test can say "401
+  first, then 200", or answer by the subreddits in the URL.
 
 * YouTube works the same way: `test/fixtures/youtube_search.json` for
   parsing and `test/support/youtube_stub.ex` for the fetch path. **No test
@@ -615,7 +621,7 @@ Compile-time defaults live in `config/config.exs`:
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `:keywords` | `["realoffice", "real office"]` | Brand terms to search for |
-| `:poll_interval_ms` | `30_000` | Per-platform poll interval |
+| `:poll_interval_ms` | `15_000` | Poll interval for platforms without their own (Reddit) |
 | `:window_ms` | 24h | Window the dashboard's counters cover |
 | `:retention_ms` | 48h | Age at which mentions are pruned |
 | `:max_mentions` | `2_000` | Hard cap on stored rows |
@@ -655,10 +661,21 @@ app-wide ones:
 ```elixir
 config :smm_monitor, SmmMonitor.Fetchers.Reddit,
   subreddits: ["smallbusiness", "marketing", "socialmedia", "Entrepreneur"],
-  limit: 50,          # items per request; Reddit caps a listing at 100
+  comments: true,               # read /comments as well as /new
+  search_interval_ms: 30_000,   # site-wide search, for clients with no subreddits
+  limit: 50,          # search results per request; Reddit caps a listing at 100
   sort: "new",
   time_filter: "day"  # hour, day, week, month, year, all
 ```
+
+A client with subreddits is not searched. `Reddit.Listings` keeps what
+has been read: the fullnames seen in the last day, a buffer of the last
+hour's new items with sequence numbers, and a cursor per client. The
+first client of a poll reads every client's subreddits (`/r/a+b/new` and
+`/r/a+b/comments`, 50 to a request), and each client is then handed the
+buffered items past its cursor, from its own subreddits, that match its
+brand terms. A client the cycle never reached (a rate limit stopped it)
+picks up where it left off on the next poll.
 
 And YouTube:
 
@@ -732,7 +749,7 @@ config :smm_monitor, SmmMonitor.Fetchers.News,
 ```
 
 A platform may also set its own `:interval_ms` in the `:platforms` config;
-YouTube does, because its quota makes the global 30s cadence unaffordable.
+YouTube does, because its quota makes the global 15s cadence unaffordable.
 
 No brand name, subreddit or search term is hardcoded anywhere in `lib/` —
 every query is built at runtime from the client being polled for. Every

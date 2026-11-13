@@ -202,8 +202,13 @@ Details: [ssh.md](ssh.md).
 * CSV cells starting with `=`, `+`, `-`, `@`, tab or carriage return
   are prefixed with `'`, so a spreadsheet shows them as text instead of
   running them as formulas.
-* Reddit links always point at `https://www.reddit.com` plus the post's
-  permalink, never at whatever external link the post carries.
+* Reddit links always point at `https://reddit.com` plus the post's or
+  comment's permalink, never at whatever external link the post carries.
+* Subreddit names are checked against Reddit's own rule (letters, digits
+  and underscores, up to 21 characters) before they go into a request
+  path, so a name typed on the clients screen cannot steer a request to
+  another Reddit endpoint. Redirects from a subreddit listing are not
+  followed.
 * Bluesky links are built from the post's author id and record key,
   both checked against a strict pattern first, and always point at
   `https://bsky.app`. Handles from the network are checked the same way

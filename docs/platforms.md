@@ -10,7 +10,7 @@ is invented unless you ask for demo data with `SMM_DEMO=1`.
 
 | Platform | Cost | Set up from | What it can actually find |
 | --- | --- | --- | --- |
-| **Reddit** | Free | Setup wizard or environment | Public posts matching your brand terms, across Reddit or in chosen subreddits |
+| **Reddit** | Free | Setup wizard or environment | New posts and comments in chosen subreddits, within about 15 s; or posts across all of Reddit, by search |
 | **YouTube** | Free daily quota | Setup wizard or environment | Public videos matching your brand terms |
 | **X (Twitter)** | Paid API plan | Environment | Recent public posts matching your brand terms (last 7 days) |
 | **Instagram** | Business account | Environment | Only your own account's surroundings — [see below](#what-instagram-monitoring-can-and-cannot-see) |
@@ -131,7 +131,8 @@ Reddit's "script" app type is free and needs no approval wait.
    - **client secret** — the field explicitly labelled **secret**.
 
 Both belong to your Reddit account, so treat the secret like a password.
-Rate limits are counted per client id: 60 requests/minute.
+Rate limits are counted per client id. The fetcher follows the figure
+Reddit reports with each response rather than assuming one.
 
 
 ### Adding them
@@ -149,31 +150,71 @@ REDDIT_USER_AGENT="smm_monitor/0.1 (by /u/yourusername)"
 > user agent, and asks that you identify yourself. Including your Reddit
 > username is the convention.
 
-Which subreddits are searched is set **per client** on the clients
+Which subreddits are watched is set **per client** on the clients
 screen. A client with no subreddits searches all of Reddit.
 `SMM_REDDIT_SUBREDDITS` only seeds the first client on a fresh install.
 
 ### What Reddit gets asked
 
-Each poll is **one** HTTP request. The configured subreddits are combined
-into a single multireddit search (`/r/marketing+smallbusiness/search`)
-rather than one request per subreddit, so watching twenty subreddits costs
-the same quota as watching one.
+Reddit is read two ways, depending on the client.
 
-Search terms are the client's brand terms; multi-word terms are quoted
-as phrases, and terms are OR-ed together. `realoffice, real office`
-becomes `realoffice OR "real office"`.
+**A client with subreddits has them read, not searched.** Every poll,
+15 seconds by default, fetches the newest posts and the newest comments
+in those subreddits:
 
-At the default 30-second poll interval that's 2 requests/minute against a
-60/minute budget. The fetcher tracks the quota Reddit reports on every
-response and stops five requests short of the limit, so a burst from
-something else sharing the credentials can't push you into a hard 429.
+```
+GET https://oauth.reddit.com/r/marketing+smallbusiness/new?limit=100
+GET https://oauth.reddit.com/r/marketing+smallbusiness/comments?limit=100
+```
 
+The app matches them against the client's brand terms itself, the same
+whole-word way as Bluesky and Mastodon. That has two advantages over
+search:
 
-Each poll asks for posts from the **last day** (`time_filter: "day"`),
-so a post is picked up while it is still current. Links in the dashboard
-and in reports always point at `https://www.reddit.com` plus the post's
-permalink, never at whatever external URL a post links to.
+* **Speed.** A post shows up on the next poll, so within about 15
+  seconds. Reddit's search index can take minutes to include a new post.
+* **Comments.** A brand named only in the comments under someone else's
+  post is seen. Search returns posts only.
+
+Every client's subreddits are read together, 50 subreddits to a
+request, once per poll. Adding a client costs nothing extra unless it
+adds subreddits. Each client is then handed only the items from its own
+subreddits. A poll that finds more new items than one page holds (100)
+reads up to three pages, so a burst or a short pause loses nothing.
+
+**A client with no subreddits has all of Reddit searched**, since there
+is no listing of everything to read instead. Search runs every **30
+seconds**, whatever the poll interval. The search terms are the
+client's brand terms: multi-word terms are quoted as phrases and terms
+are OR-ed together, so `realoffice, real office` becomes
+`realoffice OR "real office"`. Search asks for posts from the **last
+day** (`time_filter: "day"`).
+
+**What it costs.** With subreddits it is two requests a poll for every 50
+subreddits (one with `SMM_REDDIT_COMMENTS=false`), so 8 a minute at the
+default interval. Each client with no subreddits adds 2 searches a
+minute. Reddit reports the quota left on every response. The fetcher
+reads it before every request and stops five requests short, so a burst
+from something else sharing the credentials can't push you into a hard
+429.
+
+**Subreddit names are checked** before they go anywhere near a request:
+anything that is not a valid subreddit name (letters, digits and
+underscores, up to 21 characters) is ignored and logged once. If Reddit
+refuses a subreddit because it is private, banned or misspelt, the
+fetcher finds which one it was and logs it. That subreddit is skipped
+for an hour while the client's other subreddits are still read.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `SMM_POLL_INTERVAL_MS` | `15000` | How often the subreddit listings are read |
+| `SMM_REDDIT_COMMENTS` | `true` | Read comments as well as posts. `false` halves the requests |
+| `SMM_REDDIT_SEARCH_INTERVAL_MS` | `30000` | How often all of Reddit is searched for a client with no subreddits |
+
+Items older than a day are never handed to a client. Links in the
+dashboard and in reports always point at `https://reddit.com` plus the
+post's or comment's permalink, never at whatever external URL a post
+links to.
 
 ## YouTube
 
@@ -1124,7 +1165,7 @@ one can see**, which matters more than whether the code is written:
 
 | Platform | Coverage | How it works |
 | --- | --- | --- |
-| **Reddit** | **Platform-wide search.** Any post matching the brand terms. | OAuth2 script app, `client_credentials` grant, multireddit `/search` sorted by new. Token cached and refreshed before expiry; rate limit read from Reddit's headers. Free tier. |
+| **Reddit** | **New posts and comments in chosen subreddits**, or **platform-wide search** of posts for a client with none. | OAuth2 script app, `client_credentials` grant. Multireddit `/new` and `/comments` listings matched locally; `/search` sorted by new when there are no subreddits. Token cached and refreshed before expiry; rate limit read from Reddit's headers. Free tier. |
 | **YouTube** | **Platform-wide search** of video titles and descriptions. Comments are not searched — see below. | Data API v3 `search.list` with an API key. Daily quota tracked against a budget; stands down when spent. Free tier. |
 | **Twitter/X** | **Platform-wide search**, last 7 days, retweets excluded. | v2 `/2/tweets/search/recent` with an app-only bearer token. Two limits tracked separately: the 15-minute window from headers, the monthly post cap locally. **Paid tier required.** |
 | **Instagram** | **Not brand-wide.** Only posts that tag your account, comments on your own posts, and (opt-in) public posts carrying a tracked hashtag. | Graph API, scoped to one Business account. The Graph API has no keyword search at any tier — see [What Instagram monitoring can and cannot see](#what-instagram-monitoring-can-and-cannot-see). |

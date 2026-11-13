@@ -2,6 +2,9 @@ defmodule SmmMonitor.Fetchers.Reddit.FetchTest do
   @moduledoc """
   Exercises the whole live fetch path — auth, request building, parsing,
   rate limiting — against a stub transport. No network, no credentials.
+
+  These cover site-wide search, for a client with no subreddits. Reading
+  a client's subreddits is in `listings_test.exs`.
   """
 
   use ExUnit.Case, async: true
@@ -27,30 +30,36 @@ defmodule SmmMonitor.Fetchers.Reddit.FetchTest do
       assert state.auth.token == "stub-token"
     end
 
-    test "makes exactly one search request per poll", %{listing: listing} do
-      # Subreddits are combined into one multireddit search rather than one
-      # request each, which is what keeps polling clear of the rate limit.
-      RedditStub.install(token: RedditStub.token(), search: RedditStub.listing(listing))
-
-      Reddit.fetch(context(subreddits: ["marketing", "smallbusiness", "socialmedia"]), State.new())
-
-      assert [{:get, url}] = RedditStub.search_requests()
-      assert url =~ "/r/marketing+smallbusiness+socialmedia/search"
-    end
-
-    test "sends the query, sort, limit and restrict_sr", %{listing: listing} do
+    test "sends the query, sort, time filter and limit", %{listing: listing} do
       RedditStub.install(token: RedditStub.token(), search: RedditStub.listing(listing))
 
       Reddit.fetch(context(), State.new())
 
       assert [{:get, url}] = RedditStub.search_requests()
-      query = url |> URI.parse() |> Map.get(:query) |> URI.decode_query()
+      query = RedditStub.query(url)
 
       assert query["q"] == ~s(realoffice OR "real office")
       assert query["sort"] == "new"
+      assert query["t"] == "week"
       assert query["limit"] == "25"
-      assert query["restrict_sr"] == "true"
       assert query["raw_json"] == "1"
+    end
+
+    test "a :query setting searches the subreddits instead of reading them", %{listing: listing} do
+      # Reddit's search syntax is something a listing cannot apply, so
+      # the subreddits become one multireddit search, restricted to them.
+      RedditStub.install(token: RedditStub.token(), search: RedditStub.listing(listing))
+
+      Reddit.fetch(
+        context(subreddits: ["marketing", "smallbusiness"], query: "flair:review"),
+        State.new()
+      )
+
+      assert [{:get, url}] = RedditStub.search_requests()
+      assert RedditStub.listing_requests() == []
+      assert url =~ "/r/marketing+smallbusiness/search"
+      assert RedditStub.query(url)["q"] == "flair:review"
+      assert RedditStub.query(url)["restrict_sr"] == "true"
     end
 
     test "searches site-wide without restrict_sr when no subreddits are set", %{listing: listing} do
@@ -168,6 +177,51 @@ defmodule SmmMonitor.Fetchers.Reddit.FetchTest do
     end
   end
 
+  describe "search cadence" do
+    test "searches at most every search_interval_ms per client", %{listing: listing} do
+      RedditStub.install(token: RedditStub.token(), search: RedditStub.listing(listing))
+      now = :counters.new(1, [])
+      clock = fn -> 1_000_000 + :counters.get(now, 1) end
+      context = context(search_interval_ms: 30_000, clock: clock)
+
+      {:ok, [_ | _], state} = Reddit.fetch(context, State.new())
+
+      :counters.add(now, 1, 15_000)
+      assert {:ok, [], state} = Reddit.fetch(context, state)
+      assert length(RedditStub.search_requests()) == 1
+
+      # A second's slack, so a timer firing a little early still searches.
+      :counters.add(now, 1, 14_000)
+      assert {:ok, [_ | _], _state} = Reddit.fetch(context, state)
+      assert length(RedditStub.search_requests()) == 2
+    end
+
+    test "keeps the cadence per client", %{listing: listing} do
+      RedditStub.install(token: RedditStub.token(), search: RedditStub.listing(listing))
+      clock = fn -> 1_000_000 end
+      acme = Map.put(context(search_interval_ms: 30_000, clock: clock), :client, %{id: "acme"})
+      beta = %{acme | client: %{id: "beta"}}
+
+      {:ok, _mentions, state} = Reddit.fetch(acme, State.new())
+      {:ok, _mentions, state} = Reddit.fetch(beta, state)
+      {:ok, [], _state} = Reddit.fetch(acme, state)
+
+      assert length(RedditStub.search_requests()) == 2
+    end
+
+    test "a failed search is tried again on the next poll", %{listing: listing} do
+      RedditStub.install(
+        token: RedditStub.token(),
+        search: [RedditStub.error(503), RedditStub.listing(listing)]
+      )
+
+      context = context(search_interval_ms: 30_000, clock: fn -> 1_000_000 end)
+
+      {:error, {:http_error, 503}, state} = Reddit.fetch(context, State.new())
+      assert {:ok, [_ | _], _state} = Reddit.fetch(context, state)
+    end
+  end
+
   describe "ready?/1" do
     test "requires both halves of the credential pair" do
       refute Reddit.ready?(context(credentials: []))
@@ -194,8 +248,10 @@ defmodule SmmMonitor.Fetchers.Reddit.FetchTest do
   defp context(overrides \\ []) do
     {credentials, overrides} = Keyword.pop(overrides, :credentials, @credentials)
 
+    # Every call searches: the cadence between searches has its own
+    # tests below.
     opts =
-      [subreddits: ["marketing"], limit: 25, sort: "new", time_filter: "week"]
+      [subreddits: [], limit: 25, sort: "new", time_filter: "week", search_interval_ms: 0]
       |> Keyword.merge(overrides)
       |> Keyword.merge(RedditStub.req_options() |> then(&[req_options: &1]))
 

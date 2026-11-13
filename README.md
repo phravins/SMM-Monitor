@@ -58,7 +58,8 @@ sentiment summary and a table of recent mentions](docs/images/dashboard.png)
   subreddits worth watching, and its own alert settings. The dashboard
   shows one client at a time.
 - **Polling.** Each platform is asked for new posts on a timer. Reddit
-  every 30 seconds, X and Threads every 5 minutes, news feeds every 10,
+  every 15 seconds (a client's subreddits are read directly, comments
+  included; all of Reddit is searched every 30), X and Threads every 5 minutes, news feeds every 10,
   Instagram every 15 and YouTube every 18. The intervals are set by what each API allows for free, or
   for what you pay.
 - **Streaming.** Bluesky, Discord and Mastodon are not polled. One
@@ -362,7 +363,7 @@ quota, or no network. A platform whose last poll failed shows `error`.
 
 | Platform | Default interval | Why | Change with |
 | --- | --- | --- | --- |
-| Reddit | 30 seconds | 60 requests a minute allowed | `SMM_POLL_INTERVAL_MS` |
+| Reddit | 15 seconds (search: 30) | Subreddits are read directly, two requests a poll for every 50; search for a client with none | `SMM_POLL_INTERVAL_MS`, `SMM_REDDIT_SEARCH_INTERVAL_MS` |
 | X | 5 minutes | Monthly post cap | `SMM_TWITTER_POLL_INTERVAL_MS` |
 | Threads | 5 minutes | 2,200 searches a day, one per brand term per poll | `SMM_THREADS_POLL_INTERVAL_MS` |
 | News | 10 minutes | Feeds are fetched once a poll for every client, with conditional requests; most sites update theirs every few minutes at most | `SMM_NEWS_POLL_INTERVAL_MS` |
@@ -372,8 +373,9 @@ quota, or no network. A platform whose last poll failed shows `error`.
 | Discord | Live (about 1 s) | Messages are pushed as they are sent; Discord checks in every 41 s, so a quiet server stays fresh | — |
 | Mastodon | Live (about 1 s) | Posts are pushed as the server receives them; it pings every 30 s or so, so a quiet timeline stays fresh | — |
 
-Each poll asks only for recent posts (the last day on Reddit and
-YouTube), and anything already seen is skipped, so a post appears once.
+Each poll asks only for recent posts (what is new in a client's
+subreddits, or the last day of search on Reddit and YouTube), and
+anything already seen is skipped, so a post appears once.
 The screen redraws every second.
 
 ## Security at a glance

@@ -77,17 +77,18 @@ defmodule SmmMonitor.Fetchers.ClientPickupTest do
 
       RedditStub.install(
         token: RedditStub.token(),
-        search: RedditStub.listing(%{"data" => %{"children" => []}})
+        new: RedditStub.listing(liveterm_post("configuredsub")),
+        comments: RedditStub.listing(%{"data" => %{"children" => []}})
       )
 
-      Reddit.fetch(reddit_context(client), Reddit.State.new())
+      {:ok, [mention], _state} = Reddit.fetch(reddit_context(client), Reddit.State.new())
 
-      assert [{:get, url}] = RedditStub.search_requests()
-      query = url |> URI.parse() |> Map.get(:query) |> URI.decode_query()
-
-      assert query["q"] == "liveterm"
-      # The subreddit list from this client, not a global one.
-      assert url =~ "/r/configuredsub/search"
+      # The subreddit list from this client, not a global one, read
+      # rather than searched, and matched against the client's terms.
+      assert [{:get, new_url}, {:get, comments_url}] = RedditStub.listing_requests()
+      assert new_url =~ "/r/configuredsub/new"
+      assert comments_url =~ "/r/configuredsub/comments"
+      assert mention.text =~ "liveterm"
     end
 
     test "each client gets its own subreddits" do
@@ -99,16 +100,17 @@ defmodule SmmMonitor.Fetchers.ClientPickupTest do
 
       RedditStub.install(
         token: RedditStub.token(),
-        search: RedditStub.listing(%{"data" => %{"children" => []}})
+        new: RedditStub.listing(%{"data" => %{"children" => []}}),
+        comments: RedditStub.listing(%{"data" => %{"children" => []}})
       )
 
       Reddit.fetch(reddit_context(acme), Reddit.State.new())
       Reddit.fetch(reddit_context(beta), Reddit.State.new())
 
-      urls = Enum.map(RedditStub.search_requests(), fn {:get, url} -> url end)
+      urls = Enum.map(RedditStub.requests_of(:new), fn {:get, url} -> url end)
 
-      assert Enum.any?(urls, &(&1 =~ "/r/marketing/search"))
-      assert Enum.any?(urls, &(&1 =~ "/r/gamedev/search"))
+      assert Enum.any?(urls, &(&1 =~ "/r/marketing/new"))
+      assert Enum.any?(urls, &(&1 =~ "/r/gamedev/new"))
     end
 
     test "reflects a subreddit list cleared to empty" do
@@ -170,6 +172,27 @@ defmodule SmmMonitor.Fetchers.ClientPickupTest do
   defp only_client(overrides) do
     [client] = set_clients([build_client("Acme", overrides)])
     client
+  end
+
+  defp liveterm_post(subreddit) do
+    %{
+      "data" => %{
+        "children" => [
+          %{
+            "kind" => "t3",
+            "data" => %{
+              "id" => "abc123",
+              "subreddit" => subreddit,
+              "author" => "someone",
+              "title" => "Trying liveterm this week",
+              "selftext" => "",
+              "permalink" => "/r/#{subreddit}/comments/abc123/trying_liveterm/",
+              "created_utc" => System.system_time(:second)
+            }
+          }
+        ]
+      }
+    }
   end
 
   defp reddit_context(client) do
