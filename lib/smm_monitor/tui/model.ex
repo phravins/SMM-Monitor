@@ -89,7 +89,7 @@ defmodule SmmMonitor.TUI.Model do
 
   @type t :: %__MODULE__{}
 
-  # Tab shortcuts: a for all, t/i/r/y/b/d/e for the platforms (e for
+  # Tab shortcuts: a for all, t/i/r/y/b/d/e/m for the platforms (e for
   # thr*e*ads: t, h, r and a were taken), h for trends, c for config.
   # Digits are taken (they pick a client), so platforms past these get
   # letters too, and the left and right arrows step through every tab.
@@ -102,6 +102,7 @@ defmodule SmmMonitor.TUI.Model do
     ?b => :bluesky,
     ?d => :discord,
     ?e => :threads,
+    ?m => :mastodon,
     ?h => :trends,
     ?c => :config
   }
@@ -414,8 +415,8 @@ defmodule SmmMonitor.TUI.Model do
           "",
           "Reddit takes about three minutes and searches the subreddits",
           "set for each client (all of Reddit if none are set). X,",
-          "Instagram and Threads are set up with environment variables —",
-          "see docs/platforms.md.",
+          "Instagram, Threads and Mastodon are set up with environment",
+          "variables — see docs/platforms.md.",
           "",
           "Just looking around? Start it with SMM_DEMO=1 for invented",
           "data, clearly labelled DEMO DATA in the top line."
@@ -552,7 +553,8 @@ defmodule SmmMonitor.TUI.Model do
   a bug. The counts are the part that can go: they are repeated in the
   summary panel a line below, where the platform tabs' numbers are the
   ones being read anyway. If the bare names still do not fit, the long
-  ones are abbreviated (`insta`, `yt`, `bsky`, `cfg`).
+  ones are abbreviated (`insta`, `yt`, `bsky`, `cfg`), and if even those
+  do not fit, the space around each one narrows (`tab_padding/1`).
   """
   @spec tab_labels(t()) :: [{atom(), String.t()}]
   def tab_labels(%__MODULE__{} = model) do
@@ -567,9 +569,26 @@ defmodule SmmMonitor.TUI.Model do
       # With more platforms even the bare names overflow, so the long
       # ones fall back to the abbreviations people already use for them.
       drawn_width(short) + 2 <= model.columns -> short
-      true -> Enum.map(model.tabs, &{&1, tiny_tab_label(&1)})
+      true -> tiny_tab_labels(model)
     end
   end
+
+  @doc """
+  Characters drawn around each tab label: 4 (`" [x] "`), or 2 (`"[x]"`)
+  when even the shortest labels would not fit with 4.
+  """
+  @spec tab_padding(t()) :: 2 | 4
+  def tab_padding(%__MODULE__{} = model) do
+    short = Enum.map(model.tabs, &{&1, short_tab_label(&1)})
+
+    cond do
+      drawn_width(short) + 2 <= model.columns -> 4
+      drawn_width(tiny_tab_labels(model)) + 2 <= model.columns -> 4
+      true -> 2
+    end
+  end
+
+  defp tiny_tab_labels(model), do: Enum.map(model.tabs, &{&1, tiny_tab_label(&1)})
 
   defp tiny_tab_label(:twitter), do: "x"
   defp tiny_tab_label(:instagram), do: "insta"
@@ -577,6 +596,7 @@ defmodule SmmMonitor.TUI.Model do
   defp tiny_tab_label(:bluesky), do: "bsky"
   defp tiny_tab_label(:discord), do: "disc"
   defp tiny_tab_label(:threads), do: "thrd"
+  defp tiny_tab_label(:mastodon), do: "mast"
   defp tiny_tab_label(:trends), do: "trnd"
   defp tiny_tab_label(:config), do: "cfg"
   defp tiny_tab_label(tab), do: short_tab_label(tab)

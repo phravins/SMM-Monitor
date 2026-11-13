@@ -9,7 +9,8 @@ defmodule SmmMonitor.Fetchers.Supervisor do
       ├── PlatformSupervisor(:instagram) → Worker(:instagram)
       ├── PlatformSupervisor(:threads)   → Worker(:threads)
       ├── PlatformSupervisor(:bluesky)   → StreamWorker(:bluesky)
-      └── PlatformSupervisor(:discord)   → StreamWorker(:discord)
+      ├── PlatformSupervisor(:discord)   → StreamWorker(:discord)
+      └── PlatformSupervisor(:mastodon)  → StreamWorker(:mastodon)
 
   Children come from `config :smm_monitor, :platforms`, so adding a platform
   never means touching this module. A platform's `:kind` picks its worker:

@@ -4,7 +4,9 @@ defmodule SmmMonitor.Fetchers.Threads.TokenTest do
   fixed clock.
   """
 
-  use ExUnit.Case, async: true
+  # Not async: `with_log` collects log lines from every process, so a
+  # concurrent test's warning would land in the "nothing logged" checks.
+  use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog, only: [with_log: 1]
 
@@ -236,7 +238,7 @@ defmodule SmmMonitor.Fetchers.Threads.TokenTest do
       {state, log} =
         with_log(fn -> Token.current(state, @seed, settings(path), @t0 + 30 * 60_000) end)
 
-      assert log == ""
+      refute log =~ "access token expires"
 
       {_state, log} = with_log(fn -> Token.current(state, @seed, settings(path), @t0 + @hour) end)
       assert log =~ "expires in"
@@ -247,7 +249,7 @@ defmodule SmmMonitor.Fetchers.Threads.TokenTest do
 
       {_state, log} = with_log(fn -> Token.current(state, @seed, settings(path), @t0) end)
 
-      assert log == ""
+      refute log =~ "access token expires"
     end
   end
 

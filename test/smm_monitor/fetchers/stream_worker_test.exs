@@ -25,6 +25,7 @@ defmodule SmmMonitor.Fetchers.StreamWorkerTest do
                 beat_ms: nil,
                 zombie: false,
                 resumable: false,
+                prepared: 0,
                 pending: []
     end
 
@@ -33,6 +34,14 @@ defmodule SmmMonitor.Fetchers.StreamWorkerTest do
 
     @impl true
     def init_state(_context), do: %State{}
+
+    @impl true
+    def prepare(%{opts: opts}, state) do
+      case Keyword.get(opts, :prepare_error) do
+        nil -> {:ok, %{state | prepared: state.prepared + 1}}
+        reason -> {:error, reason, state}
+      end
+    end
 
     @impl true
     def url(%{opts: opts}, _state), do: {:ok, Keyword.fetch!(opts, :url)}
@@ -73,6 +82,10 @@ defmodule SmmMonitor.Fetchers.StreamWorkerTest do
     @impl true
     def handle_close(4004, state), do: {:stop, "bad token", state}
     def handle_close(_code, state), do: {:reconnect, state}
+
+    @impl true
+    def handle_connect_error({:upgrade_refused, "401"}, state), do: {:stop, "token refused", state}
+    def handle_connect_error(_reason, state), do: {:reconnect, state}
 
     @impl true
     def close_code(%State{resumable: true}), do: 4000
@@ -329,6 +342,42 @@ defmodule SmmMonitor.Fetchers.StreamWorkerTest do
 
       assert StreamWorker.status(:stream_test).last_error == "bad token"
       refute_receive {:fake_ws_connected, _conn, _request}, 2_500
+    end
+
+    test "prepare runs before connecting, in the worker" do
+      server = FakeWsServer.start()
+      start_worker(url: server.url <> "/")
+      FakeWsServer.await_connection()
+
+      assert platform_state().prepared == 1
+    end
+
+    test "a prepare that fails is retried like a failed connection" do
+      capture_log(fn ->
+        start_worker(url: "ws://127.0.0.1:1/", prepare_error: :lookup_failed)
+
+        assert eventually(fn ->
+                 StreamWorker.status(:stream_test).last_error == :lookup_failed
+               end)
+      end)
+
+      status = StreamWorker.status(:stream_test)
+      assert status.connection == :reconnecting
+      assert status.failures >= 1
+    end
+
+    test "a refused handshake the platform treats as fatal stops the worker" do
+      server = FakeWsServer.start(response: {:status, 401})
+
+      capture_log(fn ->
+        start_worker(url: server.url <> "/")
+
+        assert eventually(fn -> StreamWorker.status(:stream_test).connection == :stopped end)
+      end)
+
+      assert StreamWorker.status(:stream_test).last_error == "token refused"
+      Process.sleep(1_500)
+      assert StreamWorker.status(:stream_test).connection == :stopped
     end
 
     test "the platform chooses the close code" do

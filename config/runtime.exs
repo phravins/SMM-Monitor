@@ -66,6 +66,68 @@ defmodule SmmMonitor.RuntimeConfig do
   end
 
   @doc """
+  Reads a server's host name: `mastodon.social`, or a URL such as
+  `https://mastodon.social/`, of which only the host is kept, lowercased.
+  The host is where a token is sent, so anything else stops the boot by
+  name rather than being guessed at.
+  """
+  def hostname_or_nil(var) do
+    case System.get_env(var) do
+      nil ->
+        nil
+
+      value ->
+        trimmed = String.trim(value)
+        candidate = if String.contains?(trimmed, "://"), do: trimmed, else: "https://" <> trimmed
+
+        host =
+          case URI.new(candidate) do
+            {:ok, %URI{scheme: "https", host: host, userinfo: nil, port: 443, query: nil}}
+            when is_binary(host) ->
+              String.downcase(host)
+
+            _other ->
+              nil
+          end
+
+        cond do
+          trimmed == "" ->
+            nil
+
+          host &&
+              Regex.match?(
+                ~r/\A[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+\z/,
+                host
+              ) ->
+            host
+
+          true ->
+            raise ArgumentError,
+                  "#{var} must be a server's host name, such as mastodon.social, " <>
+                    "got #{inspect(value)}"
+        end
+    end
+  end
+
+  @doc "Reads one of `choices` (strings), returning it as an atom, or `default` when unset."
+  def choice(var, choices, default) do
+    case System.get_env(var) do
+      nil ->
+        default
+
+      value ->
+        normalised = value |> String.trim() |> String.downcase()
+
+        if normalised in choices,
+          do: String.to_atom(normalised),
+          else:
+            raise(ArgumentError,
+              message: "#{var} must be one of #{Enum.join(choices, ", ")}, got #{inspect(value)}"
+            )
+    end
+  end
+
+  @doc """
   Reads a boolean env var, returning `nil` when it is unset.
 
   `nil` means "no opinion", which lets a per-platform mock flag inherit
@@ -220,7 +282,8 @@ config :smm_monitor, :mock_platforms,
   instagram: RC.bool_or_nil("SMM_MOCK_INSTAGRAM"),
   bluesky: RC.bool_or_nil("SMM_MOCK_BLUESKY"),
   discord: RC.bool_or_nil("SMM_MOCK_DISCORD"),
-  threads: RC.bool_or_nil("SMM_MOCK_THREADS")
+  threads: RC.bool_or_nil("SMM_MOCK_THREADS"),
+  mastodon: RC.bool_or_nil("SMM_MOCK_MASTODON")
 
 # YouTube polls on its own schedule because of the API's daily quota.
 # See the README for the arithmetic behind picking a value.
@@ -323,6 +386,15 @@ config :smm_monitor, SmmMonitor.Fetchers.Discord,
   guilds: RC.snowflakes("SMM_DISCORD_GUILDS"),
   channels: RC.snowflakes("SMM_DISCORD_CHANNELS")
 
+# Mastodon listens to one server's public timeline; it needs
+# MASTODON_INSTANCE and MASTODON_ACCESS_TOKEN (below). `local` keeps to
+# posts written on that server; `federated` is everything it knows of.
+# See docs/platforms.md#mastodon.
+config :smm_monitor, SmmMonitor.Fetchers.Mastodon,
+  instance: RC.hostname_or_nil("MASTODON_INSTANCE"),
+  timeline: RC.choice("SMM_MASTODON_TIMELINE", ~w(federated local), :federated),
+  streaming_url: RC.wss_url_or_nil("SMM_MASTODON_STREAMING_URL")
+
 # API credentials. Read from the environment, never committed. See
 # docs/platforms.md. Keys typed into the setup wizard are stored in
 # settings.json instead and merged in at boot; a value set here wins.
@@ -350,6 +422,9 @@ credentials = [
   ],
   threads: [
     access_token: System.get_env("THREADS_ACCESS_TOKEN")
+  ],
+  mastodon: [
+    access_token: System.get_env("MASTODON_ACCESS_TOKEN")
   ]
 ]
 

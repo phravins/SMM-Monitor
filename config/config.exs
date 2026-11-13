@@ -103,6 +103,15 @@ config :smm_monitor, :platforms,
     enabled: true,
     tab: :when_on,
     opts: []
+  ],
+  # Streamed as well: one Mastodon server's public timeline. Collects
+  # nothing until MASTODON_INSTANCE and MASTODON_ACCESS_TOKEN are set.
+  mastodon: [
+    module: SmmMonitor.Fetchers.Mastodon,
+    kind: :stream,
+    enabled: true,
+    tab: :when_on,
+    opts: []
   ]
 
 # Which subreddits to watch is deployment-specific, so

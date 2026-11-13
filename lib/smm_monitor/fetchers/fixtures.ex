@@ -44,7 +44,8 @@ defmodule SmmMonitor.Fetchers.Fixtures do
       "Owen | Ops (#feedback)",
       "priya (#announcements)",
       "tom_sales (#off-topic)"
-    ]
+    ],
+    mastodon: ~w(@lena@mastodon.social @opsowen@fosstodon.org @priya@hachyderm.io @tom@mas.to)
   }
 
   @doc """

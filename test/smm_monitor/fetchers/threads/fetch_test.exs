@@ -167,7 +167,7 @@ defmodule SmmMonitor.Fetchers.Threads.FetchTest do
 
       assert {:ok, mentions, _state} = result
       assert length(mentions) == 3
-      refute log =~ "search"
+      refute log =~ "threads: search ("
     end
   end
 

@@ -113,6 +113,24 @@
 * The Threads token renews itself, but only while the app runs: if it is
   not started for **60 days**, the token expires and a new one has to be
   made by hand.
+* **Mastodon sees only what your server knows about.** The fediverse has
+  no central search: a server hears from its own users and from the
+  accounts they follow, so a small server misses most of the network
+  and even `mastodon.social` misses some. Posts from before the moment
+  it connects are never fetched.
+* Mastodon's federated stream on a large server carries **every public
+  post it hears about**, matched or not. The bandwidth has not been
+  measured for this release; `SMM_MASTODON_TIMELINE=local` is far lighter.
+* Mastodon's catch-up after a drop or restart is **capped at 400 posts
+  (10 pages of 40) and one hour**. A busy federated timeline passes 400
+  posts in minutes, so anything longer than a short drop loses posts.
+* A Mastodon server's admin can **switch live feeds off** or limit them
+  to some users (Mastodon 4.5 and later). The stream then stops with the
+  same message as a refused token.
+* Mastodon **boosts, edits and deletions are not followed**, and
+  unlisted, followers-only and direct posts are never seen. A post whose
+  id or account name does not look like Mastodon's is dropped.
+* Mastodon matching is whole words only, the same as Bluesky.
 * SSH access has no rate limiting or audit trail beyond one log line per
   connection — run it behind a VPN or firewall rather than exposed.
 * Remote sessions are read-only; there's no per-user permission model,
