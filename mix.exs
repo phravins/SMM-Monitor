@@ -126,6 +126,10 @@ defmodule SmmMonitor.MixProject do
       # HTTP client for the real platform APIs.
       {:req, "~> 0.5"},
       {:jason, "~> 1.4"},
+      # XML for RSS and Atom feeds. A SAX parser that creates no atoms and
+      # never expands entities from a DOCTYPE, so a hostile feed cannot
+      # exhaust memory or the atom table.
+      {:saxy, "~> 1.6.1"},
       # Durable storage for collected mentions. ecto_sqlite3 is the
       # standard Elixir/SQLite pairing and uses exqlite as its driver, so
       # this isn't a choice against exqlite - exqlite still does the work.

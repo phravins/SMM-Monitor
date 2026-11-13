@@ -9,7 +9,8 @@ the tests. For running it as a service, see [DEPLOY.md](../DEPLOY.md).
 
 ```
  Reddit · YouTube · X ·               Bluesky (Jetstream) ·
-   Instagram · Threads                    Discord (Gateway)
+   Instagram · Threads ·                  Discord (Gateway) ·
+   News (RSS/Atom feeds)                 Mastodon (streaming API)
         (HTTPS APIs, polled)               (WebSocket, pushed)
               │                                    │
               ▼                                    ▼
@@ -50,8 +51,10 @@ SmmMonitor.Supervisor                    (one_for_one)
 │   ├── PlatformSupervisor(:twitter)   → Worker(:twitter)
 │   ├── PlatformSupervisor(:instagram) → Worker(:instagram)
 │   ├── PlatformSupervisor(:threads)   → Worker(:threads)
+│   ├── PlatformSupervisor(:news)      → Worker(:news)
 │   ├── PlatformSupervisor(:bluesky)   → StreamWorker(:bluesky)
-│   └── PlatformSupervisor(:discord)   → StreamWorker(:discord)
+│   ├── PlatformSupervisor(:discord)   → StreamWorker(:discord)
+│   └── PlatformSupervisor(:mastodon)  → StreamWorker(:mastodon)
 └── Ratatouille.Runtime.Supervisor       only when the TUI is enabled
 ```
 
@@ -96,6 +99,10 @@ of asking for them. Three things differ from polling:
   (`handle_close/2`) and whether a missed heartbeat acknowledgement means
   a dead connection (`heartbeat/1` returning `{:reconnect, state}`), so
   Discord can stop on a rejected token and resume on anything else.
+  Before each attempt the platform may do a short lookup
+  (`prepare/2`; Mastodon asks its server for the streaming host), and a
+  refused handshake goes to `handle_connect_error/2`, so a `401` can
+  stop instead of being retried every minute.
 
 `StreamWorker.status/1` returns the same map shape as `Worker.status/1`,
 plus `transport: :stream`, `connection` (`:connected`, `:reconnecting`,
@@ -269,8 +276,8 @@ carried on from.
 Two steps. First, the module:
 
 ```elixir
-defmodule SmmMonitor.Fetchers.Mastodon do
-  use SmmMonitor.Fetchers.Fetcher, platform: :mastodon, display_name: "Mastodon"
+defmodule SmmMonitor.Fetchers.Tumblr do
+  use SmmMonitor.Fetchers.Fetcher, platform: :tumblr, display_name: "Tumblr"
 
   @impl true
   def ready?(context), do: is_binary(context.credentials[:access_token])
@@ -294,18 +301,25 @@ Then the config in `config/config.exs`:
 ```elixir
 config :smm_monitor, :platforms,
   # ...
-  mastodon: [module: SmmMonitor.Fetchers.Mastodon, enabled: true, opts: []]
+  tumblr: [module: SmmMonitor.Fetchers.Tumblr, enabled: true, opts: []]
 ```
 
 That's it. `use`-ing the behaviour gives you a fixture-backed
 `mock_fetch/2`, so the platform shows up in demo mode (`SMM_DEMO=1`)
 *before* the API work is done. Until `ready?/1` returns true it reports
-itself not connected and collects nothing. The supervisors build their children from config, so no
+itself not connected and collects nothing.
+
+The worker calls `fetch/2` once per client per poll, with the same
+platform state each time. A source that is the same for every client can
+be fetched once and matched many times: `lib/smm_monitor/fetchers/news.ex`
+refreshes each feed only for the first client of a poll (it compares
+`context.poll_count`), keeps the items in its state, and matches the
+other clients against them with `SmmMonitor.Matching`. The supervisors build their children from config, so no
 supervisor needs editing. Add credentials to `config/runtime.exs` and
 `.env.example` if the platform needs them.
 
 The one place that isn't automatic: `TUI.Model`'s tab shortcuts are a fixed
-map (`a`/`t`/`i`/`r`/`y`/`b`/`d`/`e`) — pick a free letter and add it there.
+map (`a`/`t`/`i`/`r`/`y`/`b`/`d`/`e`/`m`) — pick a free letter and add it there.
 A letter the config screen already uses (`d` removes a client there, `e`
 edits one) needs that screen's clauses placed above the tab-key clause in
 `handle_key`, as `d`, `e` and `h` are.
@@ -343,12 +357,14 @@ The other callbacks have defaults:
 
 | Callback | Default | Use it for |
 | --- | --- | --- |
+| `prepare/2` | nothing | A short lookup before each connection attempt, in the worker process, such as Mastodon asking its server for the streaming host. Cache the answer in the state. `{:error, reason, state}` counts as a failed attempt |
 | `headers/1` | none | Extra handshake headers |
 | `on_open/1` | send nothing | Frames to send once connected |
 | `heartbeat_ms/1`, `heartbeat/1` | no heartbeat | A keep-alive the server expects. `heartbeat_ms/1` is asked again after every message, so a server that announces its interval (Discord's Hello) can start it late. `heartbeat/1` may return `{:reconnect, state}` |
 | `idle_timeout_ms/0` | 60 s | Reconnect after this long with no message |
 | `tick/1` | `{[], state}` | Periodic work, such as saving a cursor. Returns `{posts, state}`; the posts are matched and batched like live ones (Discord's catch-up arrives this way) |
 | `handle_close/2` | reconnect | What a close code from the server means: `{:reconnect, state}` or `{:stop, reason, state}` |
+| `handle_connect_error/2` | reconnect | A failed connection attempt, such as `{:upgrade_refused, "401"}` (the status is a string). `{:stop, reason, state}` for a refusal a retry cannot fix |
 | `close_code/1` | `1000` | The code sent when closing. Discord uses `4000` while it has a session, because `1000` ends the session |
 | `max_message_bytes/0` | 1 MB | The largest message accepted |
 | `on_disconnect/1` | nothing | Saving state when the connection drops |
@@ -360,7 +376,9 @@ simple worked example, including resuming from a saved cursor
 (`SmmMonitor.Fetchers.CursorFile` writes it privately and atomically).
 `lib/smm_monitor/fetchers/discord.ex` uses everything: a late
 heartbeat, session resume, close codes, and a rate-limited catch-up
-from `tick/1`.
+from `tick/1`. `lib/smm_monitor/fetchers/mastodon.ex` shows `prepare/2`,
+`handle_connect_error/2`, a subscribe frame from `on_open/1`, and a
+REST catch-up from `tick/1` that reads the server's rate-limit headers.
 
 
 ## Testing
@@ -425,6 +443,11 @@ terminal.
   close codes), and its catch-up requests go through
   `test/support/discord_stub.ex`, where a test's handler answers each
   request (by channel, say) and can return rate-limit headers.
+  Mastodon's tests play the streaming API from the fake server
+  (subscribe, `update` events, a `401` handshake), and its instance
+  lookup and catch-up go through `test/support/mastodon_stub.ex`, which
+  answers from the test process or, with `install_global/1`, from the
+  stream worker's. Statuses come from `test/fixtures/mastodon_timeline.json`.
 
 * Threads uses `test/fixtures/threads_search.json` and
   `threads_mentions.json` for parsing, and `test/support/threads_stub.ex`
@@ -433,6 +456,18 @@ terminal.
   a `clock` setting fixes the time, so the 24-hour and 7-day renewal rules
   are tested without waiting. Instagram and Threads read Meta's error
   codes through one module, `SmmMonitor.Fetchers.MetaGraph`.
+
+* News uses recorded-shape feeds in `test/fixtures/news/` (RSS 2.0,
+  Atom, RSS 1.0 and a Google News search result) and
+  `test/support/news_stub.ex` for every request. Responses are scripted
+  by URL fragment, the longest matching fragment winning; a list is
+  played in order, so a test can make a feed fail and then recover. The
+  stub finds its script through `$callers`, so it also answers the
+  `Task.async_stream` workers that fetch feeds side by side, and it
+  records each request's URL and headers for the politeness tests
+  (conditional GET, user agent, no compression). Hostile XML (entity
+  expansion, external entities, oversize and malformed feeds) is in
+  `test/smm_monitor/fetchers/news/feed_test.exs`.
 
 Tests run with `start_fetchers: false` and `start_tui: false`, so they get
 the processing layer and nothing else: no 30s polls racing assertions.
@@ -610,7 +645,9 @@ Compile-time defaults live in `config/config.exs`:
 | `SmmMonitor.Fetchers.Bluesky` | see below | Switch, Jetstream server, cursor file |
 | `SmmMonitor.Fetchers.Discord` | see below | Server and channel allow-lists, cursor file |
 | `SmmMonitor.Fetchers.Threads` | see below | Sources, search budget, token file |
-| `:platforms` | seven entries | Platform → module, `kind` (`:poll` or `:stream`), enabled flag, `tab: :when_on`, opts |
+| `SmmMonitor.Fetchers.Mastodon` | see below | Server, timeline, streaming host, cursor file |
+| `SmmMonitor.Fetchers.News` | see below | Feed list, Google News search, size and count limits |
+| `:platforms` | nine entries | Platform → module, `kind` (`:poll` or `:stream`), enabled flag, `tab: :when_on`, opts |
 
 Reddit has its own block, since these are deployment choices rather than
 app-wide ones:
@@ -665,6 +702,33 @@ config :smm_monitor, SmmMonitor.Fetchers.Threads,
   max_terms: 10                   # brand terms searched per client per poll
   # token_file: "/path",          # unset = threads_token.json next to the database;
                                   # nil = keep renewals in memory only
+```
+
+And Mastodon (the token is a credential, `MASTODON_ACCESS_TOKEN`):
+
+```elixir
+config :smm_monitor, SmmMonitor.Fetchers.Mastodon,
+  instance: nil,           # MASTODON_INSTANCE, a bare host such as "mastodon.social"
+  timeline: :federated,    # SMM_MASTODON_TIMELINE: :federated | :local
+  streaming_url: nil       # SMM_MASTODON_STREAMING_URL; nil = ask the server
+  # cursor_file: "/path",  # unset = mastodon.cursor next to the database;
+                           # nil = don't save, no catch-up after a restart
+```
+
+And News (no credential; the feed list and search switch come from the
+environment):
+
+```elixir
+config :smm_monitor, SmmMonitor.Fetchers.News,
+  feeds: [],                 # SMM_NEWS_FEEDS and SMM_NEWS_FEEDS_FILE, https only
+  search: :off,              # SMM_NEWS_SEARCH: :off | :google
+  edition: "en-US",          # SMM_NEWS_EDITION, Google News language and country
+  max_terms: 5,              # brand terms searched per client per poll
+  max_feeds: 100,
+  max_items: 100,            # read from each feed
+  lookback_ms: :timer.hours(24),
+  concurrency: 4,            # feeds fetched at once
+  max_body_bytes: 5 * 1024 * 1024
 ```
 
 A platform may also set its own `:interval_ms` in the `:platforms` config;

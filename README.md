@@ -32,15 +32,15 @@ sentiment summary and a table of recent mentions](docs/images/dashboard.png)
 ## How it works
 
 ```text
-  Reddit  YouTube  X (Twitter)  Instagram  Threads   Bluesky   Discord
-     │       │          │           │         │         │         │
-     └───────┴──────┬───┴───────────┴─────────┘         └────┬────┘
-                    ▼                                        ▼
-       one poller per platform                one live stream, matched
-       (asks every 30 s to 18 min,            against brand terms as
-        within rate limits and quotas)        posts are written
-                    │                                       │
-                    └─────────────────┬─────────────────────┘
+  Reddit YouTube X (Twitter) Instagram Threads News   Bluesky Discord Mastodon
+     │      │        │          │        │      │       │       │       │
+     └──────┴────┬───┴──────────┴────────┴──────┘       └───────┼───────┘
+                 ▼                                              ▼
+    one poller per platform                       one live stream each, matched
+    (asks every 30 s to 18 min,                   against brand terms as
+     within rate limits and quotas)               posts are written
+                 │                                              │
+                 └────────────────────┬─────────────────────────┘
                                       ▼
                    clean · score sentiment · de-duplicate
                                       │
@@ -58,21 +58,22 @@ sentiment summary and a table of recent mentions](docs/images/dashboard.png)
   subreddits worth watching, and its own alert settings. The dashboard
   shows one client at a time.
 - **Polling.** Each platform is asked for new posts on a timer. Reddit
-  every 30 seconds, X and Threads every 5 minutes, Instagram every 15
-  and YouTube every 18. The intervals are set by what each API allows for free, or
+  every 30 seconds, X and Threads every 5 minutes, news feeds every 10,
+  Instagram every 15 and YouTube every 18. The intervals are set by what each API allows for free, or
   for what you pay.
-- **Streaming.** Bluesky and Discord are not polled. One connection
-  each stays open and receives new posts as they are written: every
-  post on Bluesky, and every message in the Discord servers you invite
-  the bot to. Those that name a client's brand are stored within a
+- **Streaming.** Bluesky, Discord and Mastodon are not polled. One
+  connection each stays open and receives new posts as they are
+  written: every post on Bluesky, every message in the Discord servers
+  you invite the bot to, and every public post your Mastodon server
+  knows about. Those that name a client's brand are stored within a
   second or two.
 - **Sentiment.** Every post gets a score from −1.0 to 1.0 from a word
   list. That is fast and needs no external service, but it can be
   fooled by sarcasm. See [docs/sentiment.md](docs/sentiment.md).
 - **Storage.** Mentions are kept in a SQLite file on your machine for
   30 days by default. Nothing is sent anywhere except to the platform
-  APIs and, if you set one up, your Slack webhook. Bluesky and Discord
-  are never told your brand terms: their posts are matched on your
+  APIs and, if you set one up, your Slack webhook. Bluesky, Discord and
+  Mastodon are never told your brand terms: their posts are matched on your
   machine.
 
 **Is the data real?** The top line of every screen ends with one word:
@@ -239,7 +240,9 @@ A platform starts collecting as soon as it has credentials. Without them
 it shows as not connected and collects nothing. Bluesky needs no
 credentials, only switching on. Discord works through a bot you invite
 to your own (or a client's) servers. Threads needs a Meta app, and Meta's
-App Review before it can search beyond your own account.
+App Review before it can search beyond your own account. Mastodon needs
+an account on a Mastodon server and a read-only token from it. News
+needs only the addresses of the feeds you want read.
 
 | Platform | Cost | How to connect | What it can find |
 | --- | --- | --- | --- |
@@ -250,6 +253,8 @@ App Review before it can search beyond your own account.
 | **Bluesky** | Free, no account | `SMM_BLUESKY_ENABLED=true` | Every new public post that names the brand, about a second after it is written. Off by default because the stream downloads all of Bluesky around the clock |
 | **Discord** | Free | `DISCORD_BOT_TOKEN`, then invite the bot | Messages that name the brand, in the servers the bot is invited to, about a second after they are sent. Discord has no public search |
 | **Threads** | Free, with a Meta app | `THREADS_ACCESS_TOKEN` | Recent public posts that name the brand, and mentions of your account. **Until Meta approves the app in App Review, only your own account's posts.** The token renews itself |
+| **Mastodon** | Free, with an account | `MASTODON_INSTANCE` and `MASTODON_ACCESS_TOKEN` | Every new public post your server knows about that names the brand, about a second after it arrives. A big server sees much more of the fediverse than a small one |
+| **News** | Free, no account | `SMM_NEWS_FEEDS` (a list of RSS or Atom feeds), and optionally `SMM_NEWS_SEARCH=google` | New articles from the last day whose headline or summary names the brand, in the feeds you list. Google News search is off by default: Google's terms allow its feeds for personal, non-commercial use |
 
 **Start with Reddit:** it is free and takes about three minutes.
 
@@ -281,6 +286,8 @@ win over keys typed into the wizard. You no longer need any
 | `b` | Bluesky only (its tab appears once it is switched on) |
 | `d` | Discord only (its tab appears once it has a token). On the config screen `d` still removes a client |
 | `e` | Threads only (its tab appears once it has a token). On the config screen `e` still edits a client |
+| `m` | Mastodon only (its tab appears once it has a token) |
+| `n` | News only (its tab appears once it has feeds, or search is on) |
 | `←` / `→` | Previous / next tab |
 | `j` / `k`, `↓` / `↑` | Scroll the mentions table |
 | `PgDn` / `PgUp` | Scroll a page at a time |
@@ -341,11 +348,12 @@ youtube       live · 4m ago · next 14m
 twitter       unconfigured
 ```
 
-Bluesky and Discord show `stream` while connected, `reconnecting` while
+Bluesky, Discord and Mastodon show `stream` while connected, `reconnecting` while
 they wait to try again, and `idle` when there is no client to match for.
 Discord shows `stopped` (and, after 90 seconds, `stale`) when Discord
-has rejected the token or the Message Content Intent. The log says
-which, and it tries again after 10 minutes.
+has rejected the token or the Message Content Intent; Mastodon does the
+same when the server refuses its token. The log says what to fix, and
+it tries again after 10 minutes.
 
 If a platform's last good fetch is more than three intervals old, it is
 marked **`stale`**. That usually means a wrong or expired key, a spent
@@ -357,10 +365,12 @@ quota, or no network. A platform whose last poll failed shows `error`.
 | Reddit | 30 seconds | 60 requests a minute allowed | `SMM_POLL_INTERVAL_MS` |
 | X | 5 minutes | Monthly post cap | `SMM_TWITTER_POLL_INTERVAL_MS` |
 | Threads | 5 minutes | 2,200 searches a day, one per brand term per poll | `SMM_THREADS_POLL_INTERVAL_MS` |
+| News | 10 minutes | Feeds are fetched once a poll for every client, with conditional requests; most sites update theirs every few minutes at most | `SMM_NEWS_POLL_INTERVAL_MS` |
 | Instagram | 15 minutes | Meta's hourly allowance | `SMM_INSTAGRAM_POLL_INTERVAL_MS` |
 | YouTube | 18 minutes | 10,000 free quota units a day, 100 per search | `SMM_YOUTUBE_POLL_INTERVAL_MS` |
 | Bluesky | Live (about 1 s) | Posts are pushed as they are written; stale after 90 s of silence | — |
 | Discord | Live (about 1 s) | Messages are pushed as they are sent; Discord checks in every 41 s, so a quiet server stays fresh | — |
+| Mastodon | Live (about 1 s) | Posts are pushed as the server receives them; it pings every 30 s or so, so a quiet timeline stays fresh | — |
 
 Each poll asks only for recent posts (the last day on Reddit and
 YouTube), and anything already seen is skipped, so a post appears once.

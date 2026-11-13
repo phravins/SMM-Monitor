@@ -407,7 +407,8 @@ collected` in the journal; it names the platform. Add its credentials to
 **The header says DEMO DATA.** `SMM_DEMO=1` (or the older
 `SMM_MOCK_MODE=true`) or one of `SMM_MOCK_REDDIT` / `SMM_MOCK_YOUTUBE` /
 `SMM_MOCK_TWITTER` / `SMM_MOCK_INSTAGRAM` / `SMM_MOCK_BLUESKY` /
-`SMM_MOCK_DISCORD` / `SMM_MOCK_THREADS` is set in
+`SMM_MOCK_DISCORD` / `SMM_MOCK_THREADS` / `SMM_MOCK_MASTODON` /
+`SMM_MOCK_NEWS` is set in
 `/etc/smm-monitor/env`. Remove the line and restart; credentials alone
 make a platform live.
 
@@ -427,8 +428,9 @@ an expired token or a spent quota.
 | `/etc/smm-monitor/authorized_keys` | `root:smm-monitor` | Who may view the dashboard. |
 | `/etc/smm-monitor/config.json` | `smm-monitor` | Legacy single-brand config. Read once on upgrade to seed the first client, then never written again. |
 | `/etc/smm-monitor/sentiment/` | `root:smm-monitor` | Word lists overriding the packaged ones. Optional. |
+| `/etc/smm-monitor/feeds.txt` | `root:smm-monitor` | News feeds, one per line, if `SMM_NEWS_FEEDS_FILE` points here. Optional. Read at boot. |
 | `/var/lib/smm-monitor/mentions.db` | `smm-monitor` `0600` | Collected mentions. |
-| `/var/lib/smm-monitor/threads_token.json` | `smm-monitor` `0600` | The renewed Threads token, if Threads is on. Next to it, `bluesky.cursor` and `discord.cursor` when those are on. |
+| `/var/lib/smm-monitor/threads_token.json` | `smm-monitor` `0600` | The renewed Threads token, if Threads is on. Next to it, `bluesky.cursor`, `discord.cursor` and `mastodon.cursor` when those are on. |
 | `/var/lib/smm-monitor/ssh/` | `smm-monitor` | SSH host key. |
 | `/etc/systemd/system/smm-monitor.service` | `root` | The unit. |
 

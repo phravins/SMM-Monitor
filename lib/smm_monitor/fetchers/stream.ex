@@ -4,8 +4,8 @@ defmodule SmmMonitor.Fetchers.Stream do
 
   `SmmMonitor.Fetchers.Fetcher` covers platforms that are asked for new
   posts on a timer. Some platforms instead send every post the moment it
-  is published, over one long-lived connection: Bluesky's Jetstream today,
-  and later Discord's Gateway and Mastodon's streaming API. This behaviour
+  is published, over one long-lived connection: Bluesky's Jetstream,
+  Discord's Gateway and Mastodon's streaming API. This behaviour
   is the contract for those, and `SmmMonitor.Fetchers.StreamWorker` is the
   process that drives them, the same way `Worker` drives a `Fetcher`.
 
@@ -28,10 +28,11 @@ defmodule SmmMonitor.Fetchers.Stream do
 
     * `ready?/1` is false, so the platform shows as not connected until
       the module says otherwise.
-    * no extra headers, no frames on open, no heartbeat, no idle timeout.
+    * nothing to prepare before connecting, no extra headers, no frames
+      on open, no heartbeat, no idle timeout.
     * `tick/1`, `on_disconnect/1` and `enrich/2` pass the state through.
-    * a close from the server reconnects; this end closes with 1000; a
-      message may be up to 1 MB.
+    * a close from the server, or a failed connection attempt,
+      reconnects; this end closes with 1000; a message may be up to 1 MB.
     * `mock_fetch/2` uses the shared fixtures, as a fetcher's does.
   """
 
@@ -54,6 +55,17 @@ defmodule SmmMonitor.Fetchers.Stream do
 
   @doc "Initial state, built once when the worker starts."
   @callback init_state(Fetcher.context()) :: state()
+
+  @doc """
+  Work to do before each connection attempt, in the worker process: a
+  lookup the URL depends on, such as asking a Mastodon server which host
+  its streaming API is on. Keep it short and cache what it learns in the
+  state; it runs before every attempt.
+
+  `{:error, reason, state}` counts as a failed attempt and is retried
+  with the usual back-off.
+  """
+  @callback prepare(Fetcher.context(), state()) :: {:ok, state()} | {:error, term(), state()}
 
   @doc """
   The URL to connect to. Called before every connection, so it can carry
@@ -121,6 +133,18 @@ defmodule SmmMonitor.Fetchers.Stream do
               {:reconnect, state()} | {:stop, term(), state()}
 
   @doc """
+  A connection attempt failed before the stream opened: `reason` is what
+  `SmmMonitor.WebSocket.connect/2` returned, such as
+  `{:upgrade_refused, "401"}` when the server turned the token away
+  (the status code is a string, as it came off the wire).
+
+  `{:reconnect, state}` retries with back-off. `{:stop, reason, state}` is
+  for a refusal that retrying cannot fix.
+  """
+  @callback handle_connect_error(term(), state()) ::
+              {:reconnect, state()} | {:stop, term(), state()}
+
+  @doc """
   The close code to send when this end closes the connection. 1000 by
   default; Discord needs another code to keep its session resumable.
   """
@@ -167,6 +191,9 @@ defmodule SmmMonitor.Fetchers.Stream do
       def init_state(_context), do: nil
 
       @impl true
+      def prepare(_context, state), do: {:ok, state}
+
+      @impl true
       def headers(_state), do: []
 
       @impl true
@@ -183,6 +210,9 @@ defmodule SmmMonitor.Fetchers.Stream do
 
       @impl true
       def handle_close(_code, state), do: {:reconnect, state}
+
+      @impl true
+      def handle_connect_error(_reason, state), do: {:reconnect, state}
 
       @impl true
       def close_code(_state), do: 1000
@@ -204,12 +234,14 @@ defmodule SmmMonitor.Fetchers.Stream do
 
       defoverridable ready?: 1,
                      init_state: 1,
+                     prepare: 2,
                      headers: 1,
                      on_open: 1,
                      heartbeat_ms: 1,
                      idle_timeout_ms: 0,
                      tick: 1,
                      handle_close: 2,
+                     handle_connect_error: 2,
                      close_code: 1,
                      max_message_bytes: 0,
                      on_disconnect: 1,

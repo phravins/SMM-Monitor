@@ -50,6 +50,7 @@ connected. Walkthroughs for getting each one are in
 | `INSTAGRAM_BUSINESS_ACCOUNT_ID` | Instagram | The 17-digit account id. `INSTAGRAM_USER_ID` is accepted as an older name |
 | `DISCORD_BOT_TOKEN` | Discord | The bot's token from the Developer Portal. Environment only |
 | `THREADS_ACCESS_TOKEN` | Threads | A long-lived Threads user token. Renewed automatically and kept in `threads_token.json` (see [Storage](#storage)). Environment only |
+| `MASTODON_ACCESS_TOKEN` | Mastodon | A token for an account on `MASTODON_INSTANCE`, with only the `read:statuses` scope. Environment only |
 
 Bluesky needs no credentials. It is switched on with a setting, because
 its stream uses bandwidth around the clock
@@ -74,6 +75,27 @@ parent channel) is in the second:
 Ids are the long numbers Discord's **Copy ID** gives. Anything else stops
 the app at start-up with the setting's name.
 
+Mastodon listens to one server, the one the token belongs to
+([platforms.md](platforms.md#mastodon)). It connects only when both
+`MASTODON_INSTANCE` and `MASTODON_ACCESS_TOKEN` are set:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `MASTODON_INSTANCE` | unset | The server, such as `mastodon.social` or `https://mastodon.social/`. Anything that is not a plain `https` server name stops the app at start-up |
+| `SMM_MASTODON_TIMELINE` | `federated` | `federated`: every public post the server knows about. `local`: only posts written on that server. Anything else stops the app at start-up |
+| `SMM_MASTODON_STREAMING_URL` | asked from the server | The streaming host, when the server's own answer is wrong or you run a proxy. Must be `wss://` |
+
+News reads the RSS and Atom feeds you list, and can also search Google
+News ([platforms.md](platforms.md#news)). It needs no credentials; it is
+on when there is at least one feed, or search is switched on:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SMM_NEWS_FEEDS` | unset | Feed addresses, comma-separated. Each must be `https://` with no user name or password; anything else stops the app at start-up |
+| `SMM_NEWS_FEEDS_FILE` | unset | A file of feed addresses, one per line; `#` starts a comment. Used together with `SMM_NEWS_FEEDS`. A bad line stops the app at start-up, naming the line |
+| `SMM_NEWS_SEARCH` | `off` | `google` also searches Google News for each brand term. Google's terms allow its feeds for personal, non-commercial use: read [platforms.md](platforms.md#google-news-search) first. Anything else stops the app at start-up |
+| `SMM_NEWS_EDITION` | `en-US` | The Google News edition searched: a language and country such as `en-GB` or `fr-CA`. Anything else stops the app at start-up |
+
 ## Polling and platform limits
 
 | Variable | Default | Meaning |
@@ -89,6 +111,7 @@ the app at start-up with the setting's name.
 | `SMM_INSTAGRAM_HASHTAGS` | the brand terms | Hashtags to search when `hashtag` is on. Meta allows 30 unique per week |
 | `SMM_THREADS_POLL_INTERVAL_MS` | `300000` (5 min) | Threads' interval |
 | `SMM_THREADS_SOURCES` | `search,mentions` | Any of `search`, `mentions`, `replies`. Anything else stops the app at start-up |
+| `SMM_NEWS_POLL_INTERVAL_MS` | `600000` (10 min) | How often news feeds (and Google News, when on) are read |
 | `SMM_THREADS_DAILY_QUERY_BUDGET` | `2000` | Keyword searches per rolling 24 hours before search pauses. `1` to `2200`, Meta's limit, which other apps on the same account share |
 | `SMM_MAX_MENTIONS` | `2000` | Most mentions held in memory for the dashboard |
 
@@ -117,7 +140,9 @@ before adding many clients.
 Bluesky's stream position is saved as `bluesky.cursor` in the same
 directory as the database, so a restart carries on where it left off.
 Discord's is `discord.cursor`: the last message id seen in each channel
-(up to 500 channels), used to fetch what was missed after a restart. Both
+(up to 500 channels), used to fetch what was missed after a restart.
+Mastodon's is `mastodon.cursor`: the newest post id seen, and the server
+it came from, so changing `MASTODON_INSTANCE` starts afresh. All three
 are `0600` and safe to delete; the next run then starts from now.
 
 Threads keeps `threads_token.json` there too (`0600`): the renewed access
@@ -183,7 +208,7 @@ SSH needs a patched Erlang/OTP runtime. See [ssh.md](ssh.md).
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SMM_DEMO` | unset | Set to `1` to show invented sample mentions everywhere. The header then says `DEMO DATA`. `SMM_MOCK_MODE=true` is the older spelling |
-| `SMM_MOCK_REDDIT`, `SMM_MOCK_YOUTUBE`, `SMM_MOCK_TWITTER`, `SMM_MOCK_INSTAGRAM`, `SMM_MOCK_BLUESKY`, `SMM_MOCK_DISCORD`, `SMM_MOCK_THREADS` | unset | `true` forces demo data on that one platform, even with credentials. You never need `false`: credentials alone make a platform live |
+| `SMM_MOCK_REDDIT`, `SMM_MOCK_YOUTUBE`, `SMM_MOCK_TWITTER`, `SMM_MOCK_INSTAGRAM`, `SMM_MOCK_BLUESKY`, `SMM_MOCK_DISCORD`, `SMM_MOCK_THREADS`, `SMM_MOCK_MASTODON`, `SMM_MOCK_NEWS` | unset | `true` forces demo data on that one platform, even with credentials. You never need `false`: credentials alone make a platform live |
 | `SMM_TUI` | on in the downloaded binary, off otherwise | `1` draws the dashboard in this terminal (`SMM_TUI=1 mix run --no-halt`, or a release started with `bin/smm_monitor start`). `0` runs headless: collecting, alerting and serving SSH only |
 
 Application config keys (for `config/*.exs`) are listed in

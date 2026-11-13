@@ -289,6 +289,14 @@ defmodule SmmMonitor.TUI.Renderers.Common do
               ]
             end
 
+            if :mastodon in model.tabs do
+              [text(content: "m", color: @accent, attributes: @bold), text(content: "astodon ")]
+            end
+
+            if :news in model.tabs do
+              [text(content: "n", color: @accent, attributes: @bold), text(content: "ews ")]
+            end
+
             text(content: "←/→", color: @accent, attributes: @bold)
             text(content: " · ")
             text(content: "c", color: @accent, attributes: @bold)
@@ -309,17 +317,28 @@ defmodule SmmMonitor.TUI.Renderers.Common do
       end
 
       # The active tab is bracketed and bold — the same cue works on terminals
-      # without colour.
+      # without colour. A terminal too narrow for every tab gets less space
+      # around each one rather than a tab bar cut off at the edge.
       defp tab_bar(model) do
+        tight? = Model.tab_padding(model) == 2
+
         panel(height: 3, padding: 0) do
           label do
             Enum.map(Model.tab_labels(model), fn {tab, content} ->
               selected? = tab == model.tab
 
-              if selected? do
-                text(content: " [#{content}] ", color: @accent, attributes: @bold)
-              else
-                text(content: "  #{content}  ", color: @muted)
+              cond do
+                selected? and tight? ->
+                  text(content: "[#{content}]", color: @accent, attributes: @bold)
+
+                selected? ->
+                  text(content: " [#{content}] ", color: @accent, attributes: @bold)
+
+                tight? ->
+                  text(content: " #{content} ", color: @muted)
+
+                true ->
+                  text(content: "  #{content}  ", color: @muted)
               end
             end)
           end
@@ -649,7 +668,7 @@ defmodule SmmMonitor.TUI.Renderers.Common do
 
           label do
             text(
-              content: "  twitter, instagram, threads: set their env vars, then restart",
+              content: "  x, instagram, threads, mastodon, news: set their env vars, then restart",
               color: @muted
             )
           end

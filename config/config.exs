@@ -103,6 +103,26 @@ config :smm_monitor, :platforms,
     enabled: true,
     tab: :when_on,
     opts: []
+  ],
+  # Streamed as well: one Mastodon server's public timeline. Collects
+  # nothing until MASTODON_INSTANCE and MASTODON_ACCESS_TOKEN are set.
+  mastodon: [
+    module: SmmMonitor.Fetchers.Mastodon,
+    kind: :stream,
+    enabled: true,
+    tab: :when_on,
+    opts: []
+  ],
+  # Polled: RSS and Atom feeds, and Google News search if switched on.
+  # Every 10 minutes is as often as most publishers update their feeds,
+  # and each fetch is conditional, so an unchanged feed costs a 304.
+  # Its tab appears once SMM_NEWS_FEEDS or SMM_NEWS_SEARCH is set.
+  news: [
+    module: SmmMonitor.Fetchers.News,
+    enabled: true,
+    tab: :when_on,
+    interval_ms: :timer.minutes(10),
+    opts: []
   ]
 
 # Which subreddits to watch is deployment-specific, so

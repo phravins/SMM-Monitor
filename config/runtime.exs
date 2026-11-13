@@ -66,6 +66,68 @@ defmodule SmmMonitor.RuntimeConfig do
   end
 
   @doc """
+  Reads a server's host name: `mastodon.social`, or a URL such as
+  `https://mastodon.social/`, of which only the host is kept, lowercased.
+  The host is where a token is sent, so anything else stops the boot by
+  name rather than being guessed at.
+  """
+  def hostname_or_nil(var) do
+    case System.get_env(var) do
+      nil ->
+        nil
+
+      value ->
+        trimmed = String.trim(value)
+        candidate = if String.contains?(trimmed, "://"), do: trimmed, else: "https://" <> trimmed
+
+        host =
+          case URI.new(candidate) do
+            {:ok, %URI{scheme: "https", host: host, userinfo: nil, port: 443, query: nil}}
+            when is_binary(host) ->
+              String.downcase(host)
+
+            _other ->
+              nil
+          end
+
+        cond do
+          trimmed == "" ->
+            nil
+
+          host &&
+              Regex.match?(
+                ~r/\A[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+\z/,
+                host
+              ) ->
+            host
+
+          true ->
+            raise ArgumentError,
+                  "#{var} must be a server's host name, such as mastodon.social, " <>
+                    "got #{inspect(value)}"
+        end
+    end
+  end
+
+  @doc "Reads one of `choices` (strings), returning it as an atom, or `default` when unset."
+  def choice(var, choices, default) do
+    case System.get_env(var) do
+      nil ->
+        default
+
+      value ->
+        normalised = value |> String.trim() |> String.downcase()
+
+        if normalised in choices,
+          do: String.to_atom(normalised),
+          else:
+            raise(ArgumentError,
+              message: "#{var} must be one of #{Enum.join(choices, ", ")}, got #{inspect(value)}"
+            )
+    end
+  end
+
+  @doc """
   Reads a boolean env var, returning `nil` when it is unset.
 
   `nil` means "no opinion", which lets a per-platform mock flag inherit
@@ -101,6 +163,60 @@ defmodule SmmMonitor.RuntimeConfig do
         |> String.split(",")
         |> Enum.map(&String.trim/1)
         |> Enum.reject(&(&1 == ""))
+    end
+  end
+
+  @doc """
+  Reads the news feeds to watch: a comma-separated list in `list_var`,
+  and one URL per line in the file `file_var` names (`#` starts a
+  comment). Each must be `https://` (plain `http://` only to this
+  machine); anything else stops the boot, naming where it came from.
+  """
+  def feed_urls(list_var, file_var) do
+    from_list = Enum.map(list(list_var, []), &{list_var, &1})
+
+    from_file =
+      case System.get_env(file_var) do
+        nil ->
+          []
+
+        "" ->
+          []
+
+        path ->
+          case File.read(path) do
+            {:ok, contents} ->
+              contents
+              |> String.split(~r/\R/)
+              |> Enum.with_index(1)
+              |> Enum.map(fn {line, number} ->
+                {line |> String.replace(~r/(\A|\s)#.*\z/, "") |> String.trim(), number}
+              end)
+              |> Enum.reject(fn {line, _number} -> line == "" end)
+              |> Enum.map(fn {line, number} -> {"#{file_var} line #{number}", line} end)
+
+            {:error, reason} ->
+              raise ArgumentError,
+                    "#{file_var} names #{inspect(path)}, which cannot be read: " <>
+                      inspect(reason)
+          end
+      end
+
+    for {source, url} <- from_list ++ from_file, uniq: true do
+      case URI.new(url) do
+        {:ok, %URI{scheme: "https", host: host, userinfo: nil}}
+        when is_binary(host) and host != "" ->
+          url
+
+        {:ok, %URI{scheme: "http", host: host, userinfo: nil}}
+        when host in ["localhost", "127.0.0.1", "::1"] ->
+          url
+
+        _other ->
+          raise ArgumentError,
+                "#{source} must be an https:// feed URL with no user name or password, " <>
+                  "got #{inspect(url)}"
+      end
     end
   end
 
@@ -220,7 +336,9 @@ config :smm_monitor, :mock_platforms,
   instagram: RC.bool_or_nil("SMM_MOCK_INSTAGRAM"),
   bluesky: RC.bool_or_nil("SMM_MOCK_BLUESKY"),
   discord: RC.bool_or_nil("SMM_MOCK_DISCORD"),
-  threads: RC.bool_or_nil("SMM_MOCK_THREADS")
+  threads: RC.bool_or_nil("SMM_MOCK_THREADS"),
+  mastodon: RC.bool_or_nil("SMM_MOCK_MASTODON"),
+  news: RC.bool_or_nil("SMM_MOCK_NEWS")
 
 # YouTube polls on its own schedule because of the API's daily quota.
 # See the README for the arithmetic behind picking a value.
@@ -323,6 +441,35 @@ config :smm_monitor, SmmMonitor.Fetchers.Discord,
   guilds: RC.snowflakes("SMM_DISCORD_GUILDS"),
   channels: RC.snowflakes("SMM_DISCORD_CHANNELS")
 
+# Mastodon listens to one server's public timeline; it needs
+# MASTODON_INSTANCE and MASTODON_ACCESS_TOKEN (below). `local` keeps to
+# posts written on that server; `federated` is everything it knows of.
+# See docs/platforms.md#mastodon.
+config :smm_monitor, SmmMonitor.Fetchers.Mastodon,
+  instance: RC.hostname_or_nil("MASTODON_INSTANCE"),
+  timeline: RC.choice("SMM_MASTODON_TIMELINE", ~w(federated local), :federated),
+  streaming_url: RC.wss_url_or_nil("SMM_MASTODON_STREAMING_URL")
+
+# News reads the RSS and Atom feeds listed here, and searches Google News
+# for each brand term when SMM_NEWS_SEARCH=google. Google's terms allow
+# personal, non-commercial use of its feeds. See docs/platforms.md#news.
+news_edition = System.get_env("SMM_NEWS_EDITION", "en-US")
+
+unless Regex.match?(~r/\A[A-Za-z]{2,3}[-_][A-Za-z]{2}\z/, String.trim(news_edition)) do
+  raise ArgumentError,
+        "SMM_NEWS_EDITION must be a language and country such as en-US or fr-CA, " <>
+          "got #{inspect(news_edition)}"
+end
+
+config :smm_monitor, SmmMonitor.Fetchers.News,
+  feeds: RC.feed_urls("SMM_NEWS_FEEDS", "SMM_NEWS_FEEDS_FILE"),
+  search: RC.choice("SMM_NEWS_SEARCH", ~w(off google), :off),
+  edition: String.trim(news_edition)
+
+if interval_ms = RC.integer_or_nil("SMM_NEWS_POLL_INTERVAL_MS") do
+  config :smm_monitor, :platforms, news: [interval_ms: interval_ms]
+end
+
 # API credentials. Read from the environment, never committed. See
 # docs/platforms.md. Keys typed into the setup wizard are stored in
 # settings.json instead and merged in at boot; a value set here wins.
@@ -350,6 +497,9 @@ credentials = [
   ],
   threads: [
     access_token: System.get_env("THREADS_ACCESS_TOKEN")
+  ],
+  mastodon: [
+    access_token: System.get_env("MASTODON_ACCESS_TOKEN")
   ]
 ]
 

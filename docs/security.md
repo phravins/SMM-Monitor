@@ -37,7 +37,7 @@ And what SMM Monitor reads that it should **not** trust:
   permissions is tightened when it is loaded.
 * Crash reports and process inspection redact credentials: the Reddit
   token struct hides its token, and the poller's state is scrubbed
-  before it is logged. The stream worker (Bluesky, Discord) does the same: its
+  before it is logged. The stream worker (Bluesky, Discord, Mastodon) does the same: its
   platform state shows as `redacted` in crash reports and `:sys`
   inspection.
 * HTTP error responses are shortened before they are logged, so an API
@@ -47,17 +47,18 @@ And what SMM Monitor reads that it should **not** trust:
   `not set`.
 * The database, reports and their directories are created readable only
   by the user SMM Monitor runs as. The systemd unit adds `UMask=0077`.
-  The streams' resume positions (`bluesky.cursor` and `discord.cursor`,
-  next to the database) are written `0600` through an exclusively created
+  The streams' resume positions (`bluesky.cursor`, `discord.cursor` and
+  `mastodon.cursor`, next to the database) are written `0600` through an exclusively created
   temporary file and a rename. Discord's lists the ids of the channels
   being watched, so it is treated like the database.
 
-### Streaming connections (Bluesky, Discord)
+### Streaming connections (Bluesky, Discord, Mastodon)
 
 * `wss://` connections check the server's certificate against the
   system CA store and check that it matches the host name. Plain
   `ws://` is refused unless the host is the local machine, so a
-  mistyped `SMM_BLUESKY_JETSTREAM_URL` cannot send traffic in the clear.
+  mistyped `SMM_BLUESKY_JETSTREAM_URL` or `SMM_MASTODON_STREAMING_URL`
+  cannot send traffic in the clear.
 * A single message is capped at **1 MB** (8 MB for Discord, whose
   server list for a large server can exceed 1 MB), and a frame over the
   cap is refused from its header alone, before any of it is read into
@@ -94,6 +95,30 @@ And what SMM Monitor reads that it should **not** trust:
 * Errors from the catch-up requests are logged with the HTTP status
   and channel id only, never the response headers.
 
+### The Mastodon token
+
+* The token is sent only in the `Authorization` header, over TLS with
+  the certificate checked: on the WebSocket handshake to the streaming
+  host, and on the catch-up requests to
+  `https://{MASTODON_INSTANCE}/api/v1/timelines/public`. It is never put
+  in a URL, a log line, the status shown on screen or a crash report.
+  The lookup that finds the streaming host (`/api/v2/instance`) is sent
+  without it.
+* The streaming host comes from your own server's answer, or from
+  `SMM_MASTODON_STREAMING_URL`. It is used only if it is `wss://` with no
+  user name or password in it; anything else falls back to
+  `wss://{MASTODON_INSTANCE}`. A handshake that is redirected or answers
+  404 makes the next attempt ask the server again rather than follow it.
+* `MASTODON_INSTANCE` must be a plain host name (an `https://` address is
+  reduced to its host); one with a port, path, query or user name stops
+  the app at start-up.
+* Ask for `read:statuses` only. With it the token can read posts and
+  nothing else: it cannot post, follow, or read your direct messages.
+  A token the server refuses stops the stream instead of retrying it
+  every minute.
+* Errors from the server are logged with the HTTP status and Mastodon's
+  error text only, never the request or response headers.
+
 ### The Threads token
 
 * The token goes only to `https://graph.threads.net`, over HTTPS with
@@ -118,6 +143,35 @@ And what SMM Monitor reads that it should **not** trust:
   `threads.com` or `threads.net` with no user name in them.
 * The connected account is read-only here: SMM Monitor never posts,
   replies or deletes, and does not ask for the permissions to.
+
+### News feeds
+
+News needs no credential, but every feed is a document from a server
+you do not control, so it is read as hostile input.
+
+* Feed addresses must be `https://` with no user name or password in
+  them; anything else stops the app at start-up. Redirects are followed
+  by hand, at most 3, and only to `https`. A redirect to `http`, to an
+  address with a password in it, or past the third hop counts as a
+  failed fetch.
+* A response is read in pieces and dropped as soon as it passes 5 MB.
+  Compression is not asked for, so a small download cannot unpack into
+  a huge one.
+* The XML is parsed with Saxy, which never expands entities declared in
+  a `DOCTYPE` and never fetches external ones, so a feed cannot run a
+  "billion laughs" attack or read a file off the machine. At most 100
+  items are read from a feed, and headlines, summaries and names are
+  capped in length.
+* An article's link is kept only when it is `http` or `https` with no
+  user name or password; `javascript:`, `data:` and the like are
+  dropped. Text goes through the same clean-up as every post.
+* Requests send no cookies, and the `User-Agent` names only the software
+  (`smm_monitor/<version> (feed reader)`), never you or your clients.
+* Feeds are named in the log by host and path only, so a feed address
+  that carries a key in its query string never reaches the log. A
+  network error is logged by its reason alone.
+* With Google News search switched on, the only thing sent to Google is
+  each brand term, as the search query.
 
 ### Remote access (SSH)
 
@@ -154,6 +208,13 @@ Details: [ssh.md](ssh.md).
   both checked against a strict pattern first, and always point at
   `https://bsky.app`. Handles from the network are checked the same way
   before they are shown; one that fails is replaced by the author id.
+* Mastodon links are built on your own server
+  (`https://{MASTODON_INSTANCE}/@user@server/{id}`) from the post id and
+  account name, both checked against a strict pattern first, never taken
+  from the post. A post whose id or account name fails is dropped.
+  Posts arrive as HTML; tags are removed and entities decoded before
+  the text goes through the same clean-up as every other post, so markup
+  cannot reach the screen, a report or Slack.
 * Discord's `<@id>`, `<#id>`, `<@&id>` and custom-emoji codes are turned
   into plain `@name`, `#channel` and `:emoji:` text, and names go through
   the same clean-up as message text, so a user name cannot carry escape

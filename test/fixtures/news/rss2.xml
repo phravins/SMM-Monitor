@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:dc="http://purl.org/dc/elements/1.1/"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/"
+     xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>The Ops Ledger</title>
+    <link>https://opsledger.example/</link>
+    <atom:link href="https://opsledger.example/feed/" rel="self" type="application/rss+xml"/>
+    <description>Operations news for small teams</description>
+    <image>
+      <title>Image title, not the feed's</title>
+      <url>https://opsledger.example/logo.png</url>
+    </image>
+    <item>
+      <title>Acme raises prices for small teams</title>
+      <link>https://opsledger.example/2026/11/acme-prices</link>
+      <guid isPermaLink="false">opsledger-4411</guid>
+      <pubDate>Thu, 12 Nov 2026 09:30:00 +0000</pubDate>
+      <dc:creator><![CDATA[Dana Lee]]></dc:creator>
+      <description><![CDATA[<p>Acme&#8217;s new plans start at <b>$12</b> a seat.</p>]]></description>
+      <content:encoded><![CDATA[<p>The full story, much longer than the summary.</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>Ten tools for remote offices</title>
+      <link>/2026/11/ten-tools</link>
+      <guid>https://opsledger.example/?p=4410</guid>
+      <pubDate>Thu, 12 Nov 2026 08:00:00 GMT</pubDate>
+      <author>tom@opsledger.example (Tom Okafor)</author>
+      <description>A round-up. Acme makes the list at number three &amp; Globex at four.</description>
+    </item>
+    <item>
+      <title>Nothing about anyone in particular</title>
+      <link>https://opsledger.example/2026/11/other</link>
+      <guid>opsledger-4409</guid>
+      <pubDate>Thu, 12 Nov 2026 07:00:00 GMT</pubDate>
+      <description>Weather and traffic.</description>
+    </item>
+    <item>
+      <title>Acme's year in review (2025)</title>
+      <link>https://opsledger.example/2025/12/acme-review</link>
+      <guid>opsledger-3001</guid>
+      <pubDate>Wed, 31 Dec 2025 12:00:00 GMT</pubDate>
+      <description>An old one: older than a day.</description>
+    </item>
+  </channel>
+</rss>

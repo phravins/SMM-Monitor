@@ -1,0 +1,76 @@
+[
+  {
+    "id": "113456789012345678",
+    "created_at": "2026-11-12T09:30:00.000Z",
+    "in_reply_to_id": null,
+    "sensitive": false,
+    "spoiler_text": "",
+    "visibility": "public",
+    "language": "en",
+    "uri": "https://mastodon.example/users/maya/statuses/113456789012345678",
+    "url": "https://mastodon.example/@maya/113456789012345678",
+    "content": "<p>Switched our team to <a href=\"https://mastodon.example/tags/Acme\" class=\"mention hashtag\" rel=\"tag\">#<span>Acme</span></a> &amp; it&#39;s been great.</p><p>Thanks <span class=\"h-card\"><a href=\"https://mastodon.example/@ops\" class=\"u-url mention\">@<span>ops</span></a></span><br />more soon</p>",
+    "reblog": null,
+    "account": {
+      "id": "109000000000000001",
+      "username": "maya",
+      "acct": "maya",
+      "display_name": "Maya",
+      "url": "https://mastodon.example/@maya"
+    },
+    "media_attachments": [],
+    "mentions": [],
+    "tags": [{"name": "acme", "url": "https://mastodon.example/tags/acme"}]
+  },
+  {
+    "id": "113456789012345690",
+    "created_at": "2026-11-12T09:31:00.000Z",
+    "in_reply_to_id": null,
+    "sensitive": true,
+    "spoiler_text": "Acme rant",
+    "visibility": "public",
+    "language": "en",
+    "uri": "https://fosstodon.example/users/owen/statuses/113456789000000001",
+    "url": "https://fosstodon.example/@owen/113456789000000001",
+    "content": "<p>Their <a href=\"https://acme.example/pricing\" rel=\"nofollow noopener\" target=\"_blank\"><span class=\"invisible\">https://</span><span class=\"\">acme.example/pricing</span><span class=\"invisible\"></span></a> page is &lt;confusing&gt;</p>",
+    "reblog": null,
+    "account": {
+      "id": "109000000000000002",
+      "username": "owen",
+      "acct": "owen@fosstodon.example",
+      "display_name": "Owen",
+      "url": "https://fosstodon.example/@owen"
+    },
+    "media_attachments": [],
+    "mentions": [],
+    "tags": []
+  },
+  {
+    "id": "113456789012345700",
+    "created_at": "2026-11-12T09:32:00.000Z",
+    "in_reply_to_id": null,
+    "sensitive": false,
+    "spoiler_text": "",
+    "visibility": "public",
+    "language": null,
+    "uri": "https://mastodon.example/users/tom/statuses/113456789012345700/activity",
+    "url": null,
+    "content": "",
+    "reblog": {
+      "id": "113456789012345678",
+      "visibility": "public",
+      "content": "<p>Switched our team to Acme</p>",
+      "account": {"acct": "maya"}
+    },
+    "account": {
+      "id": "109000000000000003",
+      "username": "tom",
+      "acct": "tom",
+      "display_name": "Tom",
+      "url": "https://mastodon.example/@tom"
+    },
+    "media_attachments": [],
+    "mentions": [],
+    "tags": []
+  }
+]

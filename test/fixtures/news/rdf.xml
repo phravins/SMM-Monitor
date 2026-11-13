@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns="http://purl.org/rss/1.0/"
+         xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel rdf:about="https://journal.example/rss">
+    <title>Northside Business Journal</title>
+    <link>https://journal.example/</link>
+    <description>Local business</description>
+    <items><rdf:Seq><rdf:li rdf:resource="https://journal.example/acme-office"/></rdf:Seq></items>
+  </channel>
+  <item rdf:about="https://journal.example/acme-office">
+    <title>Acme opens a Northside office</title>
+    <link>https://journal.example/acme-office</link>
+    <description>Forty jobs.</description>
+    <dc:date>2026-11-12T06:15Z</dc:date>
+    <dc:creator>Staff</dc:creator>
+  </item>
+</rdf:RDF>

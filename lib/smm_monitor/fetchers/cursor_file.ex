@@ -2,10 +2,10 @@ defmodule SmmMonitor.Fetchers.CursorFile do
   @moduledoc """
   A small private file for a stream's resume position.
 
-  Bluesky keeps the time of the last event it saw and Discord the last
-  message id in each channel, so a restart can pick up where the last run
-  stopped. Neither is a secret, but both say which servers and channels
-  are being watched, so the file is treated like the rest of the state
+  Bluesky keeps the time of the last event it saw, Discord the last
+  message id in each channel and Mastodon the last post id on its server,
+  so a restart can pick up where the last run stopped. None is a secret,
+  but they say which servers and channels are being watched, so the file is treated like the rest of the state
   directory: created `0600`, in a directory only this user can enter.
 
   Writes go to a temporary file that is then renamed over the old one, so

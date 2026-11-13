@@ -33,7 +33,8 @@ defmodule SmmMonitor.Fetchers.StreamWorker do
 
   A platform that says retrying cannot help (`{:stop, reason, state}`,
   for a revoked token) is not retried for 10 minutes, and the reason is
-  shown on screen.
+  shown on screen. It can say so about a message, a close from the
+  server or a refused handshake (`handle_connect_error/2`).
 
   As with `Worker`, an exception is not caught: the worker crashes and
   its platform supervisor starts it again with a clean slate.
@@ -370,6 +371,23 @@ defmodule SmmMonitor.Fetchers.StreamWorker do
   defp connect(state) do
     context = build_context(state, nil)
 
+    case state.module.prepare(context, state.platform_state) do
+      {:ok, platform_state} ->
+        open(%{state | platform_state: platform_state}, context)
+
+      {:error, reason, platform_state} ->
+        Logger.warning("#{state.platform}: cannot get ready to connect: #{inspect(reason)}")
+
+        retry_later(%{
+          state
+          | platform_state: platform_state,
+            last_error: reason,
+            failures: state.failures + 1
+        })
+    end
+  end
+
+  defp open(state, context) do
     case state.module.url(context, state.platform_state) do
       {:ok, url} ->
         headers = state.module.headers(state.platform_state)
@@ -421,9 +439,23 @@ defmodule SmmMonitor.Fetchers.StreamWorker do
     end
   end
 
+  # The platform decides whether a failed attempt is worth repeating: a
+  # handshake refused for a bad token is not.
   defp connected(state, {:error, reason}) do
-    Logger.warning("#{state.platform}: stream connection failed: #{inspect(reason)}")
-    retry_later(%{state | last_error: reason, failures: state.failures + 1})
+    case state.module.handle_connect_error(reason, state.platform_state) do
+      {:reconnect, platform_state} ->
+        Logger.warning("#{state.platform}: stream connection failed: #{inspect(reason)}")
+
+        retry_later(%{
+          state
+          | platform_state: platform_state,
+            last_error: reason,
+            failures: state.failures + 1
+        })
+
+      {:stop, stop_reason, platform_state} ->
+        stopped(%{state | platform_state: platform_state}, stop_reason)
+    end
   end
 
   defp received(state, data) do

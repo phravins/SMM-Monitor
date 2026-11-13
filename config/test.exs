@@ -33,3 +33,6 @@ config :smm_monitor, setup_complete: true
 
 # The Threads token file would otherwise land next to the test database.
 config :smm_monitor, SmmMonitor.Fetchers.Threads, token_file: nil
+
+# Nor the Mastodon stream position.
+config :smm_monitor, SmmMonitor.Fetchers.Mastodon, cursor_file: nil

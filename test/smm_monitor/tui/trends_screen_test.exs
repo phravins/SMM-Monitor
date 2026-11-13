@@ -55,12 +55,13 @@ defmodule SmmMonitor.TUI.TrendsScreenTest do
     end
 
     test "the tab bar keeps its counts when the terminal is wide enough" do
-      # Ten tabs with their counts (Bluesky, Discord and Threads show in
-      # tests, where every platform runs on demo data).
-      model = Model.new(%{window: %{height: 40, width: 160}})
+      # Twelve tabs with their counts (Bluesky, Discord, Threads, Mastodon
+      # and News show in tests, where every platform runs on demo data).
+      model = Model.new(%{window: %{height: 40, width: 200}})
 
       assert {:trends, "trends (14d)"} in Model.tab_labels(model)
       assert Enum.any?(Model.tab_labels(model), fn {_tab, label} -> label =~ "(" end)
+      assert Model.tab_padding(model) == 4
     end
 
     test "and drops them rather than trailing off the edge of a narrow one" do
@@ -72,9 +73,25 @@ defmodule SmmMonitor.TUI.TrendsScreenTest do
       assert {:trends, "trnd"} in labels
       refute Enum.any?(labels, fn {_tab, label} -> label =~ "(" end)
 
-      width = Enum.reduce(labels, 0, fn {_tab, label}, n -> n + String.length(label) + 4 end)
+      padding = Model.tab_padding(model)
+      width = Enum.reduce(labels, 0, fn {_tab, label}, n -> n + String.length(label) + padding end)
 
       assert width + 2 <= 80
+    end
+
+    test "with twelve tabs, the space around them narrows before anything is cut off" do
+      model = Model.new(%{window: %{height: 40, width: 80}})
+
+      assert length(model.tabs) == 12
+      assert Model.tab_padding(model) == 2
+      assert {:mastodon, "mast"} in Model.tab_labels(model)
+      assert {:news, "news"} in Model.tab_labels(model)
+    end
+
+    test "and stays roomy when the short names fit" do
+      model = Model.new(%{window: %{height: 40, width: 120}})
+
+      assert Model.tab_padding(model) == 4
     end
 
     test "h on the clients screen still steps between a client's fields", %{model: model} do

@@ -44,6 +44,14 @@ defmodule SmmMonitor.Fetchers.Fixtures do
       "Owen | Ops (#feedback)",
       "priya (#announcements)",
       "tom_sales (#off-topic)"
+    ],
+    mastodon: ~w(@lena@mastodon.social @opsowen@fosstodon.org @priya@hachyderm.io @tom@mas.to),
+    news: [
+      "Dana Lee (The Ops Ledger)",
+      "Martech Weekly",
+      "Priya Nair (SaaS Briefing)",
+      "Northside Business Journal",
+      "Tom Okafor (Growth Desk)"
     ]
   }
 

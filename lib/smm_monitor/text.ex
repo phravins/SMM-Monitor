@@ -91,6 +91,76 @@ defmodule SmmMonitor.Text do
   def safe(other), do: other |> to_string() |> safe()
 
   @doc """
+  HTML as plain text, for the platforms that send it: Mastodon posts and
+  news feed summaries.
+
+  Line breaks and the ends of blocks (paragraphs, list items, headings,
+  cells) become spaces, scripts and styles go with their contents, every
+  other tag goes, and entities are decoded. It is not a sanitiser: the
+  result still goes through `safe/1` like any other text.
+
+      iex> SmmMonitor.Text.html_to_text("<p>Hi &amp; bye</p><p>Next<br>line</p>")
+      "Hi & bye Next line"
+
+      iex> SmmMonitor.Text.html_to_text("<ul><li>one</li><li>two</li></ul><script>x()</script>")
+      "one two"
+
+      iex> SmmMonitor.Text.html_to_text("It&rsquo;s here &hellip;")
+      "It’s here …"
+  """
+  @spec html_to_text(term()) :: String.t()
+  def html_to_text(html) when is_binary(html) do
+    html
+    |> String.replace(~r{<(script|style)\b[^>]*>.*?</\1\s*>}is, " ")
+    |> String.replace(~r{<br\s*/?>|</(?:p|div|li|h[1-6]|td|th|tr|blockquote)\s*>}i, " ")
+    |> String.replace(~r/<[^>]*>/, "")
+    |> decode_entities()
+    |> String.split()
+    |> Enum.join(" ")
+  end
+
+  def html_to_text(_other), do: ""
+
+  @entities %{
+    "amp" => "&",
+    "lt" => "<",
+    "gt" => ">",
+    "quot" => "\"",
+    "apos" => "'",
+    "nbsp" => " ",
+    "hellip" => "…",
+    "mdash" => "—",
+    "ndash" => "–",
+    "lsquo" => "‘",
+    "rsquo" => "’",
+    "ldquo" => "“",
+    "rdquo" => "”",
+    "laquo" => "«",
+    "raquo" => "»",
+    "copy" => "©",
+    "reg" => "®",
+    "trade" => "™"
+  }
+
+  defp decode_entities(text) do
+    Regex.replace(~r/&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z]{2,8});/, text, fn all, name ->
+      case name do
+        "#x" <> hex -> codepoint(Integer.parse(hex, 16), all)
+        "#X" <> hex -> codepoint(Integer.parse(hex, 16), all)
+        "#" <> decimal -> codepoint(Integer.parse(decimal), all)
+        name -> Map.get(@entities, name, all)
+      end
+    end)
+  end
+
+  # Only real characters: not NUL, not a surrogate, not past Unicode.
+  defp codepoint({code, ""}, _all)
+       when code in 1..0xD7FF or code in 0xE000..0x10FFFF,
+       do: <<code::utf8>>
+
+  defp codepoint(_parsed, _all), do: ""
+
+  @doc """
   Whether `text` carries anything this module would strip.
 
   For tests and for anyone who wants to count how often it happens
