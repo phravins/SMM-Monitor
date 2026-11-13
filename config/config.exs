@@ -5,8 +5,9 @@ import Config
 config :smm_monitor,
   # Brand terms we search for across every platform.
   keywords: ["realoffice", "real office"],
-  # How often each fetcher polls its platform.
-  poll_interval_ms: 30_000,
+  # How often a fetcher with no `interval_ms` of its own polls: Reddit,
+  # whose subreddit listings this keeps about 15 seconds behind.
+  poll_interval_ms: 15_000,
   # Sliding window used by the dashboard's counters.
   window_ms: :timer.hours(24),
   # Mentions older than this are pruned from ETS.
@@ -130,7 +131,13 @@ config :smm_monitor, :platforms,
 # can name its own). An empty list searches all of Reddit.
 config :smm_monitor, SmmMonitor.Fetchers.Reddit,
   subreddits: ["smallbusiness", "marketing", "socialmedia", "Entrepreneur"],
-  # Items per request. Reddit caps a listing at 100.
+  # A client's subreddits are read for new posts and, with this on, new
+  # comments too: one more request per poll for every 50 subreddits.
+  comments: true,
+  # How often all of Reddit is searched for a client with no subreddits.
+  # The subreddit listings follow the poll interval instead.
+  search_interval_ms: 30_000,
+  # Search results per request. Reddit caps a listing at 100.
   limit: 50,
   sort: "new",
   # How far back the search reaches: hour, day, week, month, year, all.

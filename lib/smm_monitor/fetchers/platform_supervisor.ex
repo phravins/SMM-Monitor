@@ -50,7 +50,7 @@ defmodule SmmMonitor.Fetchers.PlatformSupervisor do
       {worker,
        module: Keyword.fetch!(opts, :module),
        opts: Keyword.get(opts, :opts, []),
-       interval_ms: Keyword.get(opts, :interval_ms, SmmMonitor.config(:poll_interval_ms, 30_000))}
+       interval_ms: Keyword.get(opts, :interval_ms, SmmMonitor.config(:poll_interval_ms, 15_000))}
     ]
 
     Supervisor.init(children,

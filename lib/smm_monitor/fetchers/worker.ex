@@ -155,7 +155,7 @@ defmodule SmmMonitor.Fetchers.Worker do
     state = %State{
       module: module,
       platform: module.platform(),
-      interval_ms: Keyword.get(opts, :interval_ms, SmmMonitor.config(:poll_interval_ms, 30_000)),
+      interval_ms: Keyword.get(opts, :interval_ms, SmmMonitor.config(:poll_interval_ms, 15_000)),
       opts: Keyword.get(opts, :opts, [])
     }
 
@@ -454,7 +454,7 @@ defmodule SmmMonitor.Fetchers.Worker do
       credentials: credentials(module.platform()),
       opts: Keyword.drop(opts, [:client, :keywords, :subreddits]),
       poll_count: 0,
-      interval_ms: SmmMonitor.config(:poll_interval_ms, 30_000)
+      interval_ms: SmmMonitor.config(:poll_interval_ms, 15_000)
     }
   end
 end

@@ -1,0 +1,69 @@
+{
+  "kind": "Listing",
+  "data": {
+    "after": "t1_c3nom",
+    "dist": 3,
+    "modhash": null,
+    "geo_filter": "",
+    "before": null,
+    "children": [
+      {
+        "kind": "t1",
+        "data": {
+          "subreddit": "marketing",
+          "subreddit_name_prefixed": "r/marketing",
+          "author": "support_sam",
+          "author_fullname": "t2_yc1hit",
+          "body": "RealOffice support replied within the hour, which surprised me.",
+          "id": "c1hit",
+          "name": "t1_c1hit",
+          "link_id": "t3_p9zzz",
+          "parent_id": "t3_p9zzz",
+          "link_title": "A thread",
+          "created": 1794484740.0,
+          "created_utc": 1794484740.0,
+          "score": 1,
+          "permalink": "/r/marketing/comments/p9zzz/a_thread/c1hit/"
+        }
+      },
+      {
+        "kind": "t1",
+        "data": {
+          "subreddit": "smallbusiness",
+          "subreddit_name_prefixed": "r/smallbusiness",
+          "author": "mod_mia",
+          "author_fullname": "t2_yc2rem",
+          "body": "[removed]",
+          "id": "c2rem",
+          "name": "t1_c2rem",
+          "link_id": "t3_p8yyy",
+          "parent_id": "t3_p8yyy",
+          "link_title": "A thread",
+          "created": 1794484600.0,
+          "created_utc": 1794484600.0,
+          "score": 1,
+          "permalink": "/r/smallbusiness/comments/p8yyy/a_thread/c2rem/"
+        }
+      },
+      {
+        "kind": "t1",
+        "data": {
+          "subreddit": "smallbusiness",
+          "subreddit_name_prefixed": "r/smallbusiness",
+          "author": "sheet_sal",
+          "author_fullname": "t2_yc3nom",
+          "body": "We went back to a spreadsheet.",
+          "id": "c3nom",
+          "name": "t1_c3nom",
+          "link_id": "t3_p8yyy",
+          "parent_id": "t3_p8yyy",
+          "link_title": "A thread",
+          "created": 1794484400.0,
+          "created_utc": 1794484400.0,
+          "score": 1,
+          "permalink": "/r/smallbusiness/comments/p8yyy/a_thread/c3nom/"
+        }
+      }
+    ]
+  }
+}

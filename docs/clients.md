@@ -29,11 +29,13 @@ nobody could act on.
    **`e`**, type the terms you actually want (comma-separated:
    `acme, acme corp, acmecorp`) and press **Enter**.
 4. Press **`l`** to move to **subreddits**, then **`e`** to edit them —
-   comma-separated, or leave empty to search all of Reddit.
+   comma-separated, or leave empty to search all of Reddit. Subreddits
+   are read every 15 seconds, comments included; searching all of
+   Reddit sees posts only, every 30 seconds.
 5. Press **`s`** to switch the dashboard to the new client.
 
 That's it. **No restart**: every platform picks the new client up on its
-next poll — 30s for Reddit, 5 minutes for X, 15 for Instagram and 18 for
+next poll — 15s for Reddit, 5 minutes for X, 15 for Instagram and 18 for
 YouTube.
 
 ```
@@ -172,7 +174,7 @@ divides**.
 | --- | --- | --- |
 | **YouTube** | 8,000 units/day (100 per search) | 80 searches/day total, split across clients |
 | **Twitter/X** | Monthly post cap (10,000 by default) | Shared; each client's results count against it |
-| **Reddit** | 60 requests/minute | Rarely binding — one request per client per poll |
+| **Reddit** | The quota Reddit reports per response | Rarely binding: every client's subreddits are read together, two requests a poll per 50 subreddits, plus a search every 30 s per client with no subreddits |
 | **Instagram** | Meta's hourly allowance | Scoped per account, so effectively per client |
 
 That's why all of a platform's clients are polled from **one worker**,
